@@ -1,5 +1,6 @@
 import asyncio
 import json
+import mimetypes
 import os
 import re
 import smtplib
@@ -19,7 +20,7 @@ from amazon_transcribe.handlers import TranscriptResultStreamHandler
 from amazon_transcribe.model import TranscriptEvent
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse, HTMLResponse
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -34,6 +35,7 @@ from sqlalchemy import (
     create_engine,
     func,
     select,
+    text,
 )
 from sqlalchemy.dialects.postgresql import ARRAY
 from sqlalchemy.orm import (
@@ -107,15 +109,30 @@ class User(Base):
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
 
 
-class Account(Base):
+class AttributesMixin:
+    """Ten free-form, reserved columns every entity carries for ad-hoc future data.
+    Populated positionally (attribute_1 first) via the 'Add Attribute' UI control."""
+    attribute_1: Mapped[str | None] = mapped_column(String(255))
+    attribute_2: Mapped[str | None] = mapped_column(String(255))
+    attribute_3: Mapped[str | None] = mapped_column(String(255))
+    attribute_4: Mapped[str | None] = mapped_column(String(255))
+    attribute_5: Mapped[str | None] = mapped_column(String(255))
+    attribute_6: Mapped[str | None] = mapped_column(String(255))
+    attribute_7: Mapped[str | None] = mapped_column(String(255))
+    attribute_8: Mapped[str | None] = mapped_column(String(255))
+    attribute_9: Mapped[str | None] = mapped_column(String(255))
+    attribute_10: Mapped[str | None] = mapped_column(String(255))
+
+
+class Account(AttributesMixin, Base):
     __tablename__ = "account"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     account_manager: Mapped[str | None] = mapped_column(String(150))
     region: Mapped[str | None] = mapped_column(String(100))
     industry: Mapped[str | None] = mapped_column(String(100))
-    primary_address: Mapped[str | None] = mapped_column(String(255))
-    secondary_address: Mapped[str | None] = mapped_column(String(255))
+    website: Mapped[str | None] = mapped_column(String(500))
+    notes: Mapped[str | None] = mapped_column(Text)
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_update_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -130,15 +147,14 @@ class Account(Base):
     projects: Mapped[list["Project"]] = relationship(back_populates="account")
 
 
-class Subsidiary(Base):
+class Subsidiary(AttributesMixin, Base):
     __tablename__ = "subsidiary"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("account.id"), nullable=False)
     subsidiary_name: Mapped[str] = mapped_column(String(255), nullable=False)
     industry: Mapped[str | None] = mapped_column(String(100))
     region: Mapped[str | None] = mapped_column(String(100))
-    primary_address: Mapped[str | None] = mapped_column(String(255))
-    secondary_address: Mapped[str | None] = mapped_column(String(255))
+    notes: Mapped[str | None] = mapped_column(Text)
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_update_date: Mapped[datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
@@ -150,19 +166,21 @@ class Subsidiary(Base):
     contacts: Mapped[list["Contact"]] = relationship(back_populates="subsidiary")
 
 
-class Contact(Base):
+class Contact(AttributesMixin, Base):
     __tablename__ = "contact"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     account_id: Mapped[int] = mapped_column(ForeignKey("account.id"), nullable=False)
     subsidiary_id: Mapped[int | None] = mapped_column(ForeignKey("subsidiary.id"), nullable=True)
     contact_name: Mapped[str] = mapped_column(String(255), nullable=False, index=True)
     designation: Mapped[str | None] = mapped_column(String(150))
+    department: Mapped[str | None] = mapped_column(String(150))
     email: Mapped[str | None] = mapped_column(String(320))
-    mobile: Mapped[str | None] = mapped_column(String(50))
-    secondary_mobile: Mapped[str | None] = mapped_column(String(50))
+    secondary_email: Mapped[str | None] = mapped_column(String(320))
+    mobile_country_code: Mapped[str | None] = mapped_column(String(6), default="+971")
+    mobile: Mapped[str | None] = mapped_column(String(10))
+    secondary_mobile_country_code: Mapped[str | None] = mapped_column(String(6), default="+971")
+    secondary_mobile: Mapped[str | None] = mapped_column(String(10))
     linkedin_url: Mapped[str | None] = mapped_column(String(500))
-    primary_address: Mapped[str | None] = mapped_column(String(255))
-    secondary_address: Mapped[str | None] = mapped_column(String(255))
     notes: Mapped[str | None] = mapped_column(Text)
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_update_date: Mapped[datetime] = mapped_column(
@@ -177,7 +195,7 @@ class Contact(Base):
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="contact")
 
 
-class Lead(Base):
+class Lead(AttributesMixin, Base):
     __tablename__ = "lead"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     lead_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -187,12 +205,15 @@ class Lead(Base):
     account_manager: Mapped[str | None] = mapped_column(String(150))
     deal_size: Mapped[Decimal | None] = mapped_column(Numeric(15, 2))
     currency: Mapped[str | None] = mapped_column(String(10), default="AED")
+    project_type: Mapped[str | None] = mapped_column(String(50), default="T&M")
+    referred_by: Mapped[str | None] = mapped_column(String(150))
+    service_line: Mapped[str | None] = mapped_column(String(255))
     type: Mapped[str | None] = mapped_column(String(50), default="Warm")
     stage: Mapped[str | None] = mapped_column(String(50), default="Non-Qualified")
     disqualification_reason: Mapped[str | None] = mapped_column(String(255))
     lead_source: Mapped[str | None] = mapped_column(String(150), default="Voice Capture")
-    service: Mapped[str | None] = mapped_column(String(150))
-    technology: Mapped[str | None] = mapped_column(String(150))
+    campaign_name: Mapped[str | None] = mapped_column(String(255))
+    technology: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     next_steps: Mapped[str | None] = mapped_column(String(255))
     next_action_date: Mapped[date | None] = mapped_column(Date)
     closure_date: Mapped[date | None] = mapped_column(Date)
@@ -209,7 +230,7 @@ class Lead(Base):
     opportunities: Mapped[list["Opportunity"]] = relationship(back_populates="lead")
 
 
-class Opportunity(Base):
+class Opportunity(AttributesMixin, Base):
     __tablename__ = "opportunity"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     opportunity_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -221,8 +242,9 @@ class Opportunity(Base):
     deal_size: Mapped[Decimal | None] = mapped_column(Numeric(15, 2))
     currency: Mapped[str | None] = mapped_column(String(10), default="AED")
     project_type: Mapped[str | None] = mapped_column(String(50), default="T&M")
-    service: Mapped[str | None] = mapped_column(String(150))
-    stage: Mapped[str] = mapped_column(String(50), default="Discovery (40%)")
+    referred_by: Mapped[str | None] = mapped_column(String(150))
+    service_line: Mapped[str | None] = mapped_column(String(255))
+    stage: Mapped[str] = mapped_column(String(50), default="Discovery — 40%")
     probability: Mapped[int | None] = mapped_column(Integer, default=40)
     reason: Mapped[str | None] = mapped_column(String(255))
     opportunity_type: Mapped[str | None] = mapped_column(String(100), default="New")
@@ -231,7 +253,8 @@ class Opportunity(Base):
     next_steps: Mapped[str | None] = mapped_column(String(255))
     next_action_date: Mapped[date | None] = mapped_column(Date)
     closure_date: Mapped[date | None] = mapped_column(Date)
-    technology: Mapped[str | None] = mapped_column(String(150))
+    expected_closure_date: Mapped[date | None] = mapped_column(Date)
+    technology: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     notes: Mapped[str | None] = mapped_column(Text)
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_update_date: Mapped[datetime] = mapped_column(
@@ -246,7 +269,7 @@ class Opportunity(Base):
     project: Mapped["Project | None"] = relationship(back_populates="opportunity")
 
 
-class Project(Base):
+class Project(AttributesMixin, Base):
     __tablename__ = "project"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     opportunity_id: Mapped[int] = mapped_column(ForeignKey("opportunity.id"), nullable=False)
@@ -254,15 +277,17 @@ class Project(Base):
     subsidiary_id: Mapped[int | None] = mapped_column(ForeignKey("subsidiary.id"), nullable=True)
     contact_id: Mapped[int | None] = mapped_column(ForeignKey("contact.id"), nullable=True)
     project_name: Mapped[str] = mapped_column(String(255), nullable=False)
-    stage: Mapped[str] = mapped_column(String(50), default="PO Awaited")
+    stage: Mapped[str] = mapped_column(String(50), default="Awaited")
     po_number: Mapped[str | None] = mapped_column(String(150))
     po_reason: Mapped[str | None] = mapped_column(String(255))
+    po_document_s3_key: Mapped[str | None] = mapped_column(String(500))
+    po_document_name: Mapped[str | None] = mapped_column(String(255))
+    po_uploaded_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     value: Mapped[Decimal | None] = mapped_column(Numeric(15, 2))
     currency: Mapped[str | None] = mapped_column(String(10), default="AED")
     start_date: Mapped[date | None] = mapped_column(Date)
     close_date: Mapped[date | None] = mapped_column(Date)
-    technology: Mapped[str | None] = mapped_column(String(150))
-    service: Mapped[str | None] = mapped_column(String(150))
+    technology: Mapped[list[str]] = mapped_column(ARRAY(String), default=list)
     notes: Mapped[str | None] = mapped_column(Text)
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     last_update_date: Mapped[datetime] = mapped_column(
@@ -275,7 +300,7 @@ class Project(Base):
     opportunity: Mapped[Opportunity] = relationship(back_populates="project")
 
 
-class Activity(Base):
+class Activity(AttributesMixin, Base):
     __tablename__ = "activity"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
     activity_name: Mapped[str] = mapped_column(String(255), nullable=False)
@@ -287,7 +312,6 @@ class Activity(Base):
     project_id: Mapped[int | None] = mapped_column(ForeignKey("project.id"), nullable=True)
     record_type: Mapped[str | None] = mapped_column(String(50))
     record_action: Mapped[str | None] = mapped_column(String(50))
-    activity_outcome: Mapped[str | None] = mapped_column(String(50))
     account_name: Mapped[str | None] = mapped_column(String(255))
     contact_name: Mapped[str | None] = mapped_column(String(255))
     subsidiary_name: Mapped[str | None] = mapped_column(String(255))
@@ -392,6 +416,72 @@ def sanitize_numeric_deal_size(v) -> Decimal | None:
             except Exception:
                 return None
     return None
+
+
+def as_list(val: str | None) -> list[str]:
+    return [val] if val else []
+
+
+def unpack_attributes(values: list[str] | None) -> dict:
+    """Maps a positional list onto attribute_1..attribute_10 for assignment onto a model instance."""
+    values = (values or [])[:10]
+    return {f"attribute_{i + 1}": (values[i].strip() if i < len(values) and values[i] and values[i].strip() else None) for i in range(10)}
+
+
+def pack_attributes(obj) -> list[str]:
+    """Reads attribute_1..attribute_10 off a model instance back into a compact positional list."""
+    result = []
+    for i in range(1, 11):
+        v = getattr(obj, f"attribute_{i}", None)
+        if v:
+            result.append(v)
+    return result
+
+
+def apply_attributes(obj, values: list[str] | None):
+    for k, v in unpack_attributes(values).items():
+        setattr(obj, k, v)
+
+
+SERVICE_LINE_DELIM = "|"
+
+
+def service_line_to_str(values: list[str] | None) -> str | None:
+    """Lead/Opportunity service_line is a single varchar column (per DBML), but the UI
+    keeps a multi-select checkbox widget — serialize the selection into that one column.
+    Pipe-delimited (not comma) because one option value ("PhAI - GenAI, AI and ML")
+    contains a literal comma."""
+    cleaned = [v.strip() for v in (values or []) if v and v.strip()]
+    return SERVICE_LINE_DELIM.join(cleaned) if cleaned else None
+
+
+def service_line_to_list(value: str | None) -> list[str]:
+    return [v for v in (value or "").split(SERVICE_LINE_DELIM) if v]
+
+
+EMAIL_REGEX = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def validate_email_format(v: str | None) -> str | None:
+    if v is None:
+        return None
+    cleaned = v.strip()
+    if not cleaned:
+        return None
+    if not EMAIL_REGEX.match(cleaned):
+        raise ValueError("Invalid email address format.")
+    return cleaned
+
+
+def validate_phone_digits(v: str | None) -> str | None:
+    if v is None:
+        return None
+    cleaned = re.sub(r"\D", "", v)
+    if not cleaned:
+        return None
+    if len(cleaned) > 10:
+        raise ValueError("Phone number must be at most 10 digits.")
+    return cleaned
 
 
 def sanitize_value(val: str | None) -> str | None:
@@ -615,7 +705,7 @@ class ExtractedOpportunity(BaseModel):
     currency: str | None = "AED"
     project_type: str | None = "T&M"
     service: str | None = None
-    stage: str | None = "Discovery (40%)"
+    stage: str | None = "Discovery — 40%"
     probability: int | None = 40
     technology: str | None = None
     next_steps: str | None = None
@@ -670,38 +760,56 @@ class ConfirmedCommitPayload(BaseModel):
 # =====================================================================
 
 class AccountFormIn(BaseModel):
+    account_id: int | None = None
     account_name: str
     account_manager: str | None = None
     region: str | None = None
     industry: str | None = None
-    primary_address: str | None = None
-    secondary_address: str | None = None
+    website: str | None = None
+    notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
 
 
 class SubsidiaryFormIn(BaseModel):
+    subsidiary_id: int | None = None
     account_id: int
     subsidiary_name: str
     region: str | None = None
     industry: str | None = None
-    primary_address: str | None = None
-    secondary_address: str | None = None
+    notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
 
 
 class ContactFormIn(BaseModel):
+    contact_id: int | None = None
     account_id: int
     subsidiary_id: int | None = None
     contact_name: str
     designation: str | None = None
+    department: str | None = None
     linkedin_url: str | None = None
     email: str | None = None
+    secondary_email: str | None = None
+    mobile_country_code: str | None = "+971"
     mobile: str | None = None
+    secondary_mobile_country_code: str | None = "+971"
     secondary_mobile: str | None = None
-    primary_address: str | None = None
-    secondary_address: str | None = None
     notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
+
+    @field_validator("email", "secondary_email", mode="before")
+    @classmethod
+    def check_email(cls, v):
+        return validate_email_format(v)
+
+    @field_validator("mobile", "secondary_mobile", mode="before")
+    @classmethod
+    def check_phone(cls, v):
+        return validate_phone_digits(v)
 
 
 class LeadFormIn(BaseModel):
+    lead_id: int | None = None
     account_id: int
     subsidiary_id: int | None = None
     contact_id: int
@@ -709,15 +817,19 @@ class LeadFormIn(BaseModel):
     account_manager: str | None = None
     deal_size: Decimal | None = None
     currency: str | None = "AED"
+    project_type: str | None = "T&M"
+    referred_by: str | None = None
+    service_line: list[str] = Field(default_factory=list)
     stage: str | None = "Qualified"
     disqualification_reason: str | None = None
     type: str | None = "Warm"
     lead_source: str | None = None
-    service: str | None = None
-    technology: str | None = None
+    campaign_name: str | None = None
+    technology: list[str] = Field(default_factory=list)
     next_steps: str | None = None
     next_action_date: date | None = None
     notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
 
     @field_validator("deal_size", mode="before")
     @classmethod
@@ -737,10 +849,13 @@ class OpportunityFormIn(BaseModel):
     subsidiary_id: int | None = None
     contact_id: int
     opportunity_name: str
+    account_manager: str | None = None
     deal_size: Decimal | None = None
     currency: str | None = "AED"
     project_type: str | None = "Fixed Cost"
-    service: str | None = None
+    referred_by: str | None = None
+    service_line: list[str] = Field(default_factory=list)
+    technology: list[str] = Field(default_factory=list)
     stage: str
     probability: int = 60
     reason: str | None = None
@@ -749,14 +864,16 @@ class OpportunityFormIn(BaseModel):
     opportunity_source: str | None = None
     next_steps: str | None = None
     next_action_date: date | None = None
+    expected_closure_date: date | None = None
     notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
 
     @field_validator("deal_size", mode="before")
     @classmethod
     def parse_deal(cls, v):
         return sanitize_numeric_deal_size(v)
 
-    @field_validator("next_action_date", mode="before")
+    @field_validator("next_action_date", "expected_closure_date", mode="before")
     @classmethod
     def parse_date(cls, v):
         return resolve_relative_date(v)
@@ -769,8 +886,7 @@ class ProjectFormIn(BaseModel):
     subsidiary_id: int | None = None
     contact_id: int
     project_name: str
-    technology: str | None = None
-    service: str | None = None
+    technology: list[str] = Field(default_factory=list)
     value: Decimal | None = None
     currency: str | None = "AED"
     start_date: date | None = None
@@ -779,6 +895,7 @@ class ProjectFormIn(BaseModel):
     po_number: str | None = None
     po_reason: str | None = None
     notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
 
     @field_validator("value", mode="before")
     @classmethod
@@ -792,15 +909,17 @@ class ProjectFormIn(BaseModel):
 
 
 class ActivityFormIn(BaseModel):
+    activity_id: int | None = None
     activity_name: str
     record_type: str
     linked_record_id: int
+    contact_id: int | None = None
     record_action: str
-    activity_outcome: str | None = None
     activity_date: str | None = None
     next_step: str | None = None
     next_action_date: str | None = None
     notes: str | None = None
+    attributes: list[str] = Field(default_factory=list)
 
 
 # =====================================================================
@@ -996,8 +1115,11 @@ class AWSBedrockService:
 
 BACKEND_DIR = Path(__file__).resolve().parent
 ROOT_DIR = BACKEND_DIR.parent
-TEMPLATES_DIR = ROOT_DIR / "templates"
-STATIC_DIR = BACKEND_DIR / "static"
+FRONTEND_DIST_DIR = ROOT_DIR / "frontend" / "dist"
+
+# Python's mimetypes DB is missing some modern types on certain platforms/versions —
+# without this, FileResponse serves them as application/octet-stream.
+mimetypes.add_type("image/webp", ".webp")
 LOGS_DIR = BACKEND_DIR / "logs"
 
 def log_telemetry_entry(entry: dict):
@@ -1191,8 +1313,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             type="Hot",
             stage="Qualified",
             lead_source="Opportunity Voice Backfill",
-            service=payload.opportunity.service or payload.lead.service,
-            technology=payload.opportunity.technology or payload.lead.technology,
+            technology=as_list(payload.opportunity.technology or payload.lead.technology),
             next_steps=payload.opportunity.next_steps or payload.lead.next_steps,
             next_action_date=payload.opportunity.next_action_date or payload.lead.next_action_date,
             closure_date=payload.opportunity.closure_date or payload.lead.closure_date,
@@ -1212,10 +1333,9 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             deal_size=payload.opportunity.deal_size or payload.lead.deal_size,
             currency=payload.opportunity.currency or payload.lead.currency or "AED",
             project_type=payload.opportunity.project_type or "T&M",
-            service=payload.opportunity.service or payload.lead.service,
-            stage=payload.opportunity.stage or "Discovery (40%)",
+            stage=payload.opportunity.stage or "Discovery — 40%",
             probability=payload.opportunity.probability or 40,
-            technology=payload.opportunity.technology or payload.lead.technology,
+            technology=as_list(payload.opportunity.technology or payload.lead.technology),
             next_steps=payload.opportunity.next_steps or payload.lead.next_steps,
             next_action_date=payload.opportunity.next_action_date or payload.lead.next_action_date,
             closure_date=payload.opportunity.closure_date or payload.lead.closure_date,
@@ -1277,8 +1397,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
         type=payload.lead.type or "Warm",
         stage=payload.lead.stage or "Non-Qualified",
         lead_source=payload.lead.lead_source or "Voice Capture",
-        service=payload.lead.service,
-        technology=payload.lead.technology,
+        technology=as_list(payload.lead.technology),
         next_steps=payload.lead.next_steps,
         next_action_date=payload.lead.next_action_date,
         closure_date=payload.lead.closure_date,
@@ -1339,54 +1458,129 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-if STATIC_DIR.exists():
-    app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
-
-PAGE_MAPPING = {
-    "account": TEMPLATES_DIR / "DataPhi_Page_01_New_Account_updated.html",
-    "subsidiary": TEMPLATES_DIR / "DataPhi_Page_02_New_Subsidiary 1.html",
-    "contact": TEMPLATES_DIR / "DataPhi_Page_03_New_Contact 1.html",
-    "lead": TEMPLATES_DIR / "DataPhi_Page_04_Create_Lead 1.html",
-    "opportunity": TEMPLATES_DIR / "DataPhi_Page_05_Opportunity_Details_updated.html",
-    "project": TEMPLATES_DIR / "DataPhi_Page_06_Project_Details 1.html",
-    "activity": TEMPLATES_DIR / "DataPhi_Page_07_Log_Activity.html",
-    "voice": TEMPLATES_DIR / "DataPhi_Page_Voice_Station.html",
-}
+if (FRONTEND_DIST_DIR / "assets").exists():
+    app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
 
 _transcribe_service = None
 _bedrock_service = None
 
 
+def run_schema_migrations():
+    """Idempotently brings an existing (pre-existing-data) database up to date with
+    model changes that Base.metadata.create_all() cannot apply to already-existing tables."""
+
+    def column_data_type(conn, table, column) -> str | None:
+        return conn.execute(
+            text("SELECT data_type FROM information_schema.columns WHERE table_name=:t AND column_name=:c"),
+            {"t": table, "c": column},
+        ).scalar()
+
+    def array_to_scalar(conn, table, column, base_type="VARCHAR(255)"):
+        """Converts an existing ARRAY column to a comma-joined scalar varchar, or just adds
+        the scalar column if it doesn't exist yet. Used for lead/opportunity.service_line,
+        which the DBML types as a single varchar even though the UI keeps a multi-select."""
+        data_type = column_data_type(conn, table, column)
+        if data_type is None:
+            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {base_type}'))
+        elif data_type == "ARRAY":
+            tmp_col = f"{column}__scalar"
+            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{tmp_col}" {base_type}'))
+            conn.execute(text(f'UPDATE "{table}" SET "{tmp_col}" = array_to_string("{column}", \'|\')'))
+            conn.execute(text(f'ALTER TABLE "{table}" DROP COLUMN "{column}"'))
+            conn.execute(text(f'ALTER TABLE "{table}" RENAME COLUMN "{tmp_col}" TO "{column}"'))
+
+    simple_additions = [
+        ("contact", "mobile_country_code", "VARCHAR(6) DEFAULT '+971'"),
+        ("contact", "secondary_mobile_country_code", "VARCHAR(6) DEFAULT '+971'"),
+        ("contact", "department", "VARCHAR(150)"),
+        ("contact", "secondary_email", "VARCHAR(320)"),
+        ("account", "website", "VARCHAR(500)"),
+        ("account", "notes", "TEXT"),
+        ("subsidiary", "notes", "TEXT"),
+        ("lead", "project_type", "VARCHAR(50)"),
+        ("lead", "referred_by", "VARCHAR(150)"),
+        ("lead", "campaign_name", "VARCHAR(255)"),
+        ("opportunity", "referred_by", "VARCHAR(150)"),
+        ("opportunity", "expected_closure_date", "DATE"),
+        ("project", "po_document_s3_key", "VARCHAR(500)"),
+        ("project", "po_document_name", "VARCHAR(255)"),
+        ("project", "po_uploaded_at", "TIMESTAMPTZ"),
+    ]
+
+    dropped_columns = [
+        ("account", "account_tier"),
+        ("account", "primary_address"),
+        ("account", "secondary_address"),
+        ("subsidiary", "primary_address"),
+        ("subsidiary", "secondary_address"),
+        ("contact", "primary_address"),
+        ("contact", "secondary_address"),
+        ("lead", "service"),
+        ("lead", "solution_scope"),
+        ("opportunity", "service"),
+        ("opportunity", "solution_scope"),
+        ("opportunity", "campaign_name"),
+        ("opportunity", "poc_start_date"),
+        ("opportunity", "poc_end_date"),
+        ("opportunity", "poc_outcome"),
+        ("project", "service"),
+        ("project", "service_line"),
+        ("activity", "activity_outcome"),
+    ]
+
+    array_conversions = [
+        ("lead", "technology", "VARCHAR(150)"),
+        ("opportunity", "technology", "VARCHAR(150)"),
+        ("project", "technology", "VARCHAR(150)"),
+    ]
+
+    scalar_conversions = [
+        ("lead", "service_line", "VARCHAR(255)"),
+        ("opportunity", "service_line", "VARCHAR(255)"),
+    ]
+
+    attribute_tables = ["account", "subsidiary", "contact", "lead", "opportunity", "project", "activity"]
+
+    with engine.begin() as conn:
+        for table, column, coltype in simple_additions:
+            conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{column}" {coltype}'))
+
+        for table, column in dropped_columns:
+            conn.execute(text(f'ALTER TABLE "{table}" DROP COLUMN IF EXISTS "{column}"'))
+
+        for table, column, base_type in scalar_conversions:
+            array_to_scalar(conn, table, column, base_type)
+
+        for table, column, base_type in array_conversions:
+            data_type = column_data_type(conn, table, column)
+
+            if data_type is None:
+                conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{column}" {base_type}[]'))
+            elif data_type != "ARRAY":
+                tmp_col = f"{column}__migrated"
+                conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN "{tmp_col}" {base_type}[]'))
+                conn.execute(
+                    text(
+                        f'UPDATE "{table}" SET "{tmp_col}" = '
+                        f"CASE WHEN \"{column}\" IS NOT NULL AND \"{column}\" <> '' "
+                        f'THEN ARRAY["{column}"] ELSE ARRAY[]::{base_type}[] END'
+                    )
+                )
+                conn.execute(text(f'ALTER TABLE "{table}" DROP COLUMN "{column}"'))
+                conn.execute(text(f'ALTER TABLE "{table}" RENAME COLUMN "{tmp_col}" TO "{column}"'))
+
+        for table in attribute_tables:
+            for i in range(1, 11):
+                conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "attribute_{i}" VARCHAR(255)'))
+
+
 @app.on_event("startup")
 def startup():
     Base.metadata.create_all(bind=engine)
+    run_schema_migrations()
     global _transcribe_service, _bedrock_service
     _transcribe_service = AWSTranscribeService(region=settings().aws_region)
     _bedrock_service = AWSBedrockService(region=settings().aws_region, model_id=settings().bedrock_model_id)
-
-
-# =====================================================================
-# HTML Navigation Endpoints with Auto-Fallback
-# =====================================================================
-
-@app.get("/")
-def home():
-    file_path = PAGE_MAPPING["voice"]
-    if file_path.exists():
-        return FileResponse(str(file_path))
-    return FileResponse(str(PAGE_MAPPING["account"]))
-
-
-@app.get("/page/{name}")
-def get_page(name: str):
-    file_path = PAGE_MAPPING.get(name)
-    if file_path and file_path.exists():
-        return FileResponse(str(file_path))
-
-    if name == "voice":
-        return HTMLResponse(content=EMBEDDED_VOICE_STATION_HTML)
-
-    raise HTTPException(status_code=404, detail=f"Page template '{name}' not found at {file_path}")
 
 
 @app.get("/health")
@@ -1420,8 +1614,8 @@ def get_accounts_overview(db: Session = Depends(get_db)):
             "account_manager": acc.account_manager or "Unassigned",
             "region": acc.region or "N/A",
             "industry": acc.industry or "N/A",
-            "primary_address": acc.primary_address or "N/A",
-            "secondary_address": acc.secondary_address or "",
+            "website": acc.website or "N/A",
+            "notes": acc.notes or "",
             "creation_date": acc.creation_date.strftime("%Y-%m-%d %H:%M") if acc.creation_date else "N/A",
             "subsidiaries": [
                 {
@@ -1429,7 +1623,6 @@ def get_accounts_overview(db: Session = Depends(get_db)):
                     "subsidiary_name": sub.subsidiary_name,
                     "region": sub.region or "N/A",
                     "industry": sub.industry or "N/A",
-                    "primary_address": sub.primary_address or "N/A",
                 }
                 for sub in acc.subsidiaries
             ],
@@ -1484,17 +1677,24 @@ def get_lookups(db: Session = Depends(get_db)):
         ],
         "leads": [
             {"id": l.id, "lead_name": l.lead_name, "account_id": l.account_id,
-             "account_name": acc_name.get(l.account_id), "contact_id": l.contact_id,
+             "account_name": acc_name.get(l.account_id), "subsidiary_id": l.subsidiary_id,
+             "contact_id": l.contact_id,
              "contact_name": con_name.get(l.contact_id), "stage": l.stage, "type": l.type,
              "deal_size": float(l.deal_size) if l.deal_size else None, "currency": l.currency,
-             "service": l.service}
+             "project_type": l.project_type,
+             "service_line": service_line_to_list(l.service_line),
+             "technology": l.technology or [],
+             "referred_by": l.referred_by}
             for l in leads
         ],
         "opportunities": [
             {"id": o.id, "opportunity_name": o.opportunity_name, "account_id": o.account_id,
-             "account_name": acc_name.get(o.account_id), "contact_id": o.contact_id,
+             "account_name": acc_name.get(o.account_id), "subsidiary_id": o.subsidiary_id,
+             "contact_id": o.contact_id,
              "contact_name": con_name.get(o.contact_id), "lead_id": o.lead_id, "stage": o.stage,
-             "deal_size": float(o.deal_size) if o.deal_size else None, "currency": o.currency}
+             "deal_size": float(o.deal_size) if o.deal_size else None, "currency": o.currency,
+             "technology": o.technology or [],
+             "service_line": service_line_to_list(o.service_line)}
             for o in opportunities
         ],
         "projects": [
@@ -1524,7 +1724,7 @@ def get_subsidiaries_overview(db: Session = Depends(get_db)):
             "subsidiary_name": s.subsidiary_name,
             "region": s.region or "N/A",
             "industry": s.industry or "N/A",
-            "primary_address": s.primary_address or "N/A",
+            "notes": s.notes or "",
             "account_id": s.account_id,
             "account_name": s.account.account_name if s.account else "N/A",
             "account_manager": s.account.account_manager if s.account else "N/A",
@@ -1558,7 +1758,9 @@ def get_contacts_overview(db: Session = Depends(get_db)):
             "id": c.id,
             "contact_name": c.contact_name,
             "designation": c.designation or "N/A",
+            "department": c.department or "N/A",
             "email": c.email or "N/A",
+            "secondary_email": c.secondary_email or "N/A",
             "mobile": c.mobile or "N/A",
             "linkedin_url": c.linkedin_url or "N/A",
             "account_id": c.account_id,
@@ -1608,10 +1810,14 @@ def get_leads_overview(db: Session = Depends(get_db)):
             "account_manager": l.account_manager or "N/A",
             "deal_size": float(l.deal_size) if l.deal_size else 0,
             "currency": l.currency or "AED",
+            "project_type": l.project_type or "N/A",
+            "referred_by": l.referred_by or "N/A",
+            "service_line": service_line_to_list(l.service_line),
             "stage": l.stage or "N/A",
             "type": l.type or "N/A",
-            "service": l.service or "N/A",
-            "technology": l.technology or "N/A",
+            "lead_source": l.lead_source or "N/A",
+            "campaign_name": l.campaign_name or "N/A",
+            "technology": l.technology or [],
             "next_steps": l.next_steps or "N/A",
             "next_action_date": l.next_action_date.isoformat() if l.next_action_date else None,
             "creation_date": l.creation_date.strftime("%Y-%m-%d %H:%M") if l.creation_date else "N/A",
@@ -1658,12 +1864,16 @@ def get_opportunities_overview(db: Session = Depends(get_db)):
             "account_manager": o.account_manager or "N/A",
             "deal_size": float(o.deal_size) if o.deal_size else 0,
             "currency": o.currency or "AED",
+            "project_type": o.project_type or "N/A",
+            "referred_by": o.referred_by or "N/A",
+            "service_line": service_line_to_list(o.service_line),
             "stage": o.stage or "N/A",
             "probability": o.probability or 0,
-            "service": o.service or "N/A",
-            "technology": o.technology or "N/A",
+            "technology": o.technology or [],
+            "opportunity_source": o.opportunity_source or "N/A",
             "next_steps": o.next_steps or "N/A",
             "next_action_date": o.next_action_date.isoformat() if o.next_action_date else None,
+            "expected_closure_date": o.expected_closure_date.isoformat() if o.expected_closure_date else None,
             "creation_date": o.creation_date.strftime("%Y-%m-%d %H:%M") if o.creation_date else "N/A",
             "activities": [
                 {"id": a.id, "activity_name": a.activity_name, "record_action": a.record_action,
@@ -1698,8 +1908,9 @@ def get_projects_overview(db: Session = Depends(get_db)):
             "currency": p.currency or "AED",
             "start_date": p.start_date.isoformat() if p.start_date else None,
             "close_date": p.close_date.isoformat() if p.close_date else None,
-            "technology": p.technology or "N/A",
-            "service": p.service or "N/A",
+            "technology": p.technology or [],
+            "po_document_name": p.po_document_name,
+            "po_uploaded_at": p.po_uploaded_at.isoformat() if p.po_uploaded_at else None,
             "creation_date": p.creation_date.strftime("%Y-%m-%d %H:%M") if p.creation_date else "N/A",
         }
         for p in projects
@@ -1758,7 +1969,6 @@ def get_activities_overview(db: Session = Depends(get_db)):
             "linked_record_id": linked_id(a),
             "linked_label": linked_label(a),
             "record_action": a.record_action or "N/A",
-            "activity_outcome": a.activity_outcome or "N/A",
             "activity_date": a.activity_date.strftime("%Y-%m-%d %H:%M") if a.activity_date else "N/A",
             "next_step": a.next_step or "N/A",
             "next_action_date": a.next_action_date.isoformat() if a.next_action_date else None,
@@ -1769,20 +1979,149 @@ def get_activities_overview(db: Session = Depends(get_db)):
 
 
 # =====================================================================
+# Single-Record Detail Endpoints (feed the Edit forms with full field data)
+# =====================================================================
+
+@app.get("/api/account/{account_id}")
+def get_account_detail(account_id: int, db: Session = Depends(get_db)):
+    acc = db.scalar(select(Account).where(Account.id == account_id))
+    if not acc:
+        raise HTTPException(404, "Account not found.")
+    return {
+        "id": acc.id, "account_name": acc.account_name, "account_manager": acc.account_manager,
+        "region": acc.region, "industry": acc.industry, "website": acc.website, "notes": acc.notes,
+        "attributes": pack_attributes(acc),
+    }
+
+
+@app.get("/api/subsidiary/{subsidiary_id}")
+def get_subsidiary_detail(subsidiary_id: int, db: Session = Depends(get_db)):
+    sub = db.scalar(select(Subsidiary).where(Subsidiary.id == subsidiary_id))
+    if not sub:
+        raise HTTPException(404, "Subsidiary not found.")
+    return {
+        "id": sub.id, "account_id": sub.account_id, "subsidiary_name": sub.subsidiary_name,
+        "region": sub.region, "industry": sub.industry, "notes": sub.notes,
+        "attributes": pack_attributes(sub),
+    }
+
+
+@app.get("/api/contact/{contact_id}")
+def get_contact_detail(contact_id: int, db: Session = Depends(get_db)):
+    con = db.scalar(select(Contact).where(Contact.id == contact_id))
+    if not con:
+        raise HTTPException(404, "Contact not found.")
+    return {
+        "id": con.id, "account_id": con.account_id, "subsidiary_id": con.subsidiary_id,
+        "contact_name": con.contact_name, "designation": con.designation, "department": con.department,
+        "linkedin_url": con.linkedin_url, "email": con.email, "secondary_email": con.secondary_email,
+        "mobile_country_code": con.mobile_country_code, "mobile": con.mobile,
+        "secondary_mobile_country_code": con.secondary_mobile_country_code, "secondary_mobile": con.secondary_mobile,
+        "notes": con.notes, "attributes": pack_attributes(con),
+    }
+
+
+@app.get("/api/lead/{lead_id}")
+def get_lead_detail(lead_id: int, db: Session = Depends(get_db)):
+    lead = db.scalar(select(Lead).where(Lead.id == lead_id))
+    if not lead:
+        raise HTTPException(404, "Lead not found.")
+    return {
+        "id": lead.id, "account_id": lead.account_id, "subsidiary_id": lead.subsidiary_id,
+        "contact_id": lead.contact_id, "lead_name": lead.lead_name, "account_manager": lead.account_manager,
+        "deal_size": float(lead.deal_size) if lead.deal_size else None, "currency": lead.currency,
+        "project_type": lead.project_type, "referred_by": lead.referred_by,
+        "service_line": service_line_to_list(lead.service_line),
+        "stage": lead.stage, "disqualification_reason": lead.disqualification_reason, "type": lead.type,
+        "lead_source": lead.lead_source, "campaign_name": lead.campaign_name,
+        "technology": lead.technology or [],
+        "next_steps": lead.next_steps,
+        "next_action_date": lead.next_action_date.isoformat() if lead.next_action_date else None,
+        "notes": lead.notes, "attributes": pack_attributes(lead),
+    }
+
+
+@app.get("/api/opportunity/{opportunity_id}")
+def get_opportunity_detail(opportunity_id: int, db: Session = Depends(get_db)):
+    opp = db.scalar(select(Opportunity).where(Opportunity.id == opportunity_id))
+    if not opp:
+        raise HTTPException(404, "Opportunity not found.")
+    return {
+        "id": opp.id, "lead_id": opp.lead_id, "account_id": opp.account_id, "subsidiary_id": opp.subsidiary_id,
+        "contact_id": opp.contact_id, "opportunity_name": opp.opportunity_name,
+        "account_manager": opp.account_manager,
+        "deal_size": float(opp.deal_size) if opp.deal_size else None, "currency": opp.currency,
+        "project_type": opp.project_type, "referred_by": opp.referred_by,
+        "service_line": service_line_to_list(opp.service_line), "technology": opp.technology or [],
+        "stage": opp.stage, "probability": opp.probability, "reason": opp.reason,
+        "opportunity_type": opp.opportunity_type, "funded_by": opp.funded_by,
+        "opportunity_source": opp.opportunity_source, "next_steps": opp.next_steps,
+        "next_action_date": opp.next_action_date.isoformat() if opp.next_action_date else None,
+        "expected_closure_date": opp.expected_closure_date.isoformat() if opp.expected_closure_date else None,
+        "notes": opp.notes, "attributes": pack_attributes(opp),
+    }
+
+
+@app.get("/api/project/{project_id}")
+def get_project_detail(project_id: int, db: Session = Depends(get_db)):
+    proj = db.scalar(select(Project).where(Project.id == project_id))
+    if not proj:
+        raise HTTPException(404, "Project not found.")
+    return {
+        "id": proj.id, "opportunity_id": proj.opportunity_id, "account_id": proj.account_id,
+        "subsidiary_id": proj.subsidiary_id, "contact_id": proj.contact_id, "project_name": proj.project_name,
+        "technology": proj.technology or [],
+        "value": float(proj.value) if proj.value else None, "currency": proj.currency,
+        "start_date": proj.start_date.isoformat() if proj.start_date else None,
+        "close_date": proj.close_date.isoformat() if proj.close_date else None,
+        "po_status": proj.stage, "po_number": proj.po_number, "po_reason": proj.po_reason, "notes": proj.notes,
+        "po_document_name": proj.po_document_name,
+        "po_uploaded_at": proj.po_uploaded_at.isoformat() if proj.po_uploaded_at else None,
+        "attributes": pack_attributes(proj),
+    }
+
+
+@app.get("/api/activity/{activity_id}")
+def get_activity_detail(activity_id: int, db: Session = Depends(get_db)):
+    act = db.scalar(select(Activity).where(Activity.id == activity_id))
+    if not act:
+        raise HTTPException(404, "Activity not found.")
+    linked_id = {
+        "account": act.account_id, "subsidiary": act.subsidiary_id, "contact": act.contact_id,
+        "lead": act.lead_id, "opportunity": act.opportunity_id, "project": act.project_id,
+    }.get((act.record_type or "").lower())
+    return {
+        "id": act.id, "activity_name": act.activity_name, "record_type": act.record_type,
+        "linked_record_id": linked_id, "contact_id": act.contact_id, "record_action": act.record_action,
+        "activity_date": act.activity_date.strftime("%Y-%m-%d %H:%M") if act.activity_date else None,
+        "next_step": act.next_step,
+        "next_action_date": act.next_action_date.isoformat() if act.next_action_date else None,
+        "notes": act.notes, "attributes": pack_attributes(act),
+    }
+
+
+# =====================================================================
 # Manual Form Save Endpoints (Direct POST from HTML Pages)
 # =====================================================================
 
 @app.post("/api/account/save")
 def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
-    account = Account(
-        account_name=data.account_name,
-        account_manager=data.account_manager,
-        region=data.region,
-        industry=data.industry,
-        primary_address=data.primary_address,
-        secondary_address=data.secondary_address,
-    )
-    db.add(account)
+    account = None
+    if data.account_id:
+        account = db.scalar(select(Account).where(Account.id == data.account_id))
+
+    if not account:
+        account = Account(account_name=data.account_name)
+        db.add(account)
+
+    account.account_name = data.account_name
+    account.account_manager = data.account_manager
+    account.region = data.region
+    account.industry = data.industry
+    account.website = data.website
+    account.notes = data.notes
+    apply_attributes(account, data.attributes)
+
     db.commit()
     db.refresh(account)
     return {"status": "success", "account_id": account.id}
@@ -1790,15 +2129,21 @@ def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
 
 @app.post("/api/subsidiary/save")
 def save_subsidiary_form(data: SubsidiaryFormIn, db: Session = Depends(get_db)):
-    sub = Subsidiary(
-        account_id=data.account_id,
-        subsidiary_name=data.subsidiary_name,
-        region=data.region,
-        industry=data.industry,
-        primary_address=data.primary_address,
-        secondary_address=data.secondary_address,
-    )
-    db.add(sub)
+    sub = None
+    if data.subsidiary_id:
+        sub = db.scalar(select(Subsidiary).where(Subsidiary.id == data.subsidiary_id))
+
+    if not sub:
+        sub = Subsidiary(account_id=data.account_id, subsidiary_name=data.subsidiary_name)
+        db.add(sub)
+
+    sub.account_id = data.account_id
+    sub.subsidiary_name = data.subsidiary_name
+    sub.region = data.region
+    sub.industry = data.industry
+    sub.notes = data.notes
+    apply_attributes(sub, data.attributes)
+
     db.commit()
     db.refresh(sub)
     return {"status": "success", "subsidiary_id": sub.id}
@@ -1806,20 +2151,29 @@ def save_subsidiary_form(data: SubsidiaryFormIn, db: Session = Depends(get_db)):
 
 @app.post("/api/contact/save")
 def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
-    contact = Contact(
-        account_id=data.account_id,
-        subsidiary_id=data.subsidiary_id,
-        contact_name=data.contact_name,
-        designation=data.designation,
-        email=data.email,
-        mobile=data.mobile,
-        secondary_mobile=data.secondary_mobile,
-        linkedin_url=data.linkedin_url,
-        primary_address=data.primary_address,
-        secondary_address=data.secondary_address,
-        notes=data.notes,
-    )
-    db.add(contact)
+    contact = None
+    if data.contact_id:
+        contact = db.scalar(select(Contact).where(Contact.id == data.contact_id))
+
+    if not contact:
+        contact = Contact(account_id=data.account_id, contact_name=data.contact_name)
+        db.add(contact)
+
+    contact.account_id = data.account_id
+    contact.subsidiary_id = data.subsidiary_id
+    contact.contact_name = data.contact_name
+    contact.designation = data.designation
+    contact.department = data.department
+    contact.email = data.email
+    contact.secondary_email = data.secondary_email
+    contact.mobile_country_code = data.mobile_country_code
+    contact.mobile = data.mobile
+    contact.secondary_mobile_country_code = data.secondary_mobile_country_code
+    contact.secondary_mobile = data.secondary_mobile
+    contact.linkedin_url = data.linkedin_url
+    contact.notes = data.notes
+    apply_attributes(contact, data.attributes)
+
     db.commit()
     db.refresh(contact)
     return {"status": "success", "contact_id": contact.id}
@@ -1827,25 +2181,35 @@ def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
 
 @app.post("/api/lead/save")
 def save_lead_form(data: LeadFormIn, db: Session = Depends(get_db)):
-    lead = Lead(
-        account_id=data.account_id,
-        subsidiary_id=data.subsidiary_id,
-        contact_id=data.contact_id,
-        lead_name=data.lead_name,
-        account_manager=data.account_manager,
-        deal_size=data.deal_size,
-        currency=data.currency,
-        stage=data.stage,
-        disqualification_reason=data.disqualification_reason,
-        type=data.type,
-        lead_source=data.lead_source,
-        service=data.service,
-        technology=data.technology,
-        next_steps=data.next_steps,
-        next_action_date=data.next_action_date,
-        notes=data.notes,
-    )
-    db.add(lead)
+    lead = None
+    if data.lead_id:
+        lead = db.scalar(select(Lead).where(Lead.id == data.lead_id))
+
+    if not lead:
+        lead = Lead(account_id=data.account_id, contact_id=data.contact_id, lead_name=data.lead_name)
+        db.add(lead)
+
+    lead.account_id = data.account_id
+    lead.subsidiary_id = data.subsidiary_id
+    lead.contact_id = data.contact_id
+    lead.lead_name = data.lead_name
+    lead.account_manager = data.account_manager
+    lead.deal_size = data.deal_size
+    lead.currency = data.currency
+    lead.project_type = data.project_type
+    lead.referred_by = data.referred_by
+    lead.service_line = service_line_to_str(data.service_line)
+    lead.stage = data.stage
+    lead.disqualification_reason = data.disqualification_reason
+    lead.type = data.type
+    lead.lead_source = data.lead_source
+    lead.campaign_name = data.campaign_name if data.lead_source == "Campaign" else None
+    lead.technology = data.technology
+    lead.next_steps = data.next_steps
+    lead.next_action_date = data.next_action_date
+    lead.notes = data.notes
+    apply_attributes(lead, data.attributes)
+
     db.commit()
     db.refresh(lead)
     return {"status": "success", "lead_id": lead.id}
@@ -1864,10 +2228,13 @@ def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)
             account_id=data.account_id,
             subsidiary_id=data.subsidiary_id,
             contact_id=data.contact_id,
+            account_manager=data.account_manager,
             deal_size=data.deal_size,
             currency=data.currency,
             project_type=data.project_type,
-            service=data.service,
+            referred_by=data.referred_by,
+            service_line=service_line_to_str(data.service_line),
+            technology=data.technology,
             stage=data.stage,
             probability=data.probability,
             reason=data.reason,
@@ -1876,15 +2243,19 @@ def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)
             opportunity_source=data.opportunity_source,
             next_steps=data.next_steps,
             next_action_date=data.next_action_date,
+            expected_closure_date=data.expected_closure_date,
             notes=data.notes,
         )
         db.add(opp)
     else:
         opp.opportunity_name = data.opportunity_name
+        opp.account_manager = data.account_manager
         opp.deal_size = data.deal_size
         opp.currency = data.currency
         opp.project_type = data.project_type
-        opp.service = data.service
+        opp.referred_by = data.referred_by
+        opp.service_line = service_line_to_str(data.service_line)
+        opp.technology = data.technology
         opp.stage = data.stage
         opp.probability = data.probability
         opp.reason = data.reason
@@ -1893,7 +2264,10 @@ def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)
         opp.opportunity_source = data.opportunity_source
         opp.next_steps = data.next_steps
         opp.next_action_date = data.next_action_date
+        opp.expected_closure_date = data.expected_closure_date
         opp.notes = data.notes
+
+    apply_attributes(opp, data.attributes)
 
     db.flush()
 
@@ -1908,10 +2282,9 @@ def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)
                 contact_id=opp.contact_id,
                 project_name=f"{opp.opportunity_name} — Delivery",
                 technology=opp.technology,
-                service=opp.service,
                 value=opp.deal_size,
                 currency=opp.currency,
-                stage="PO Awaited",
+                stage="Awaited",
             )
             db.add(proj)
             db.flush()
@@ -1937,12 +2310,11 @@ def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
             contact_id=data.contact_id,
             project_name=data.project_name,
             technology=data.technology,
-            service=data.service,
             value=data.value,
             currency=data.currency,
             start_date=data.start_date,
             close_date=data.close_date,
-            stage=data.po_status or "PO Awaited",
+            stage=data.po_status or "Awaited",
             po_number=data.po_number,
             po_reason=data.po_reason,
             notes=data.notes,
@@ -1951,15 +2323,16 @@ def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
     else:
         proj.project_name = data.project_name
         proj.technology = data.technology
-        proj.service = data.service
         proj.value = data.value
         proj.currency = data.currency
         proj.start_date = data.start_date
         proj.close_date = data.close_date
-        proj.stage = data.po_status or "PO Awaited"
+        proj.stage = data.po_status or "Awaited"
         proj.po_number = data.po_number
         proj.po_reason = data.po_reason
         proj.notes = data.notes
+
+    apply_attributes(proj, data.attributes)
 
     db.commit()
     db.refresh(proj)
@@ -1968,14 +2341,28 @@ def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
 
 @app.post("/api/activity/save")
 def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
-    act = Activity(
-        activity_name=data.activity_name,
-        record_type=data.record_type,
-        record_action=data.record_action,
-        activity_outcome=data.activity_outcome,
-        notes=data.notes,
-        next_step=data.next_step,
-    )
+    act = None
+    if data.activity_id:
+        act = db.scalar(select(Activity).where(Activity.id == data.activity_id))
+
+    if not act:
+        act = Activity(activity_name=data.activity_name, record_type=data.record_type)
+        db.add(act)
+
+    act.activity_name = data.activity_name
+    act.record_type = data.record_type
+    act.record_action = data.record_action
+    act.notes = data.notes
+    act.next_step = data.next_step
+    act.next_action_date = resolve_relative_date(data.next_action_date)
+    apply_attributes(act, data.attributes)
+
+    act.account_id = None
+    act.subsidiary_id = None
+    act.contact_id = None
+    act.lead_id = None
+    act.opportunity_id = None
+    act.project_id = None
 
     rtype = data.record_type.lower()
     if rtype == "account":
@@ -1991,7 +2378,12 @@ def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
     elif rtype == "project":
         act.project_id = data.linked_record_id
 
-    db.add(act)
+    # Independent contact tag (e.g. an Account-type activity that also names which
+    # stakeholder it's about) — the Activity table carries account_id and contact_id
+    # as separate nullable FKs, so this doesn't collide with the record_type mapping above.
+    if data.contact_id and rtype != "contact":
+        act.contact_id = data.contact_id
+
     db.commit()
     db.refresh(act)
     return {"status": "success", "activity_id": act.id}
@@ -2350,176 +2742,26 @@ async def commit_voice_records(payload: ConfirmedCommitPayload, db: Session = De
         raise HTTPException(500, f"Database transaction failed: {exc}") from exc
 
 
+
 # =====================================================================
-# Embedded Voice Station Interface
+# React SPA Static Serving (production build) — registered last so it
+# never shadows an /api/* route above it.
 # =====================================================================
 
-EMBEDDED_VOICE_STATION_HTML = """<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8">
-<title>DataPhi CRM — AWS Voice & Telemetry Station</title>
-<style>
-  :root { --p: #6C5CE7; --pd: #4B3FC4; --pl: #F3F1FD; --ink: #1E2430; --m: #64748B; --b: #E2E8F0; --bg: #F8FAFC; --warn: #FEF3C7; --warn-ink: #92400E; --danger: #EF4444; }
-  * { box-sizing: border-box; }
-  body { margin: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--ink); }
-  .topnav { height: 60px; background: #fff; border-bottom: 1px solid var(--b); display: flex; align-items: center; justify-content: space-between; padding: 0 28px; }
-  .navlinks a { text-decoration: none; color: var(--m); font-size: 13px; font-weight: 700; padding: 8px 12px; border-radius: 8px; }
-  .navlinks a.active { color: var(--pd); background: var(--pl); }
-  .wrap { max-width: 1380px; margin: 24px auto; padding: 0 24px; display: grid; grid-template-columns: 440px 1fr; gap: 24px; }
-  .card { background: #fff; border: 1px solid var(--b); border-radius: 14px; padding: 22px; box-shadow: 0 2px 10px rgba(0,0,0,0.02); }
-  .mic-stage { background: linear-gradient(180deg, var(--pl), #fff); border: 1.5px dashed #D2CCFB; border-radius: 12px; padding: 24px; text-align: center; margin-bottom: 18px; }
-  .mic-btn { width: 64px; height: 64px; border-radius: 50%; border: none; background: var(--p); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center; margin: 0 auto 10px; transition: transform 0.2s; box-shadow: 0 0 0 6px rgba(108,92,231,0.15); }
-  .mic-btn.recording { background: var(--danger); box-shadow: 0 0 0 10px rgba(239,68,68,0.25); }
-  .t-header { font-size: 11px; font-weight: 800; text-transform: uppercase; color: var(--pd); letter-spacing: 0.05em; margin: 12px 0 6px; display: flex; justify-content: space-between; }
-  .t-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-bottom: 12px; }
-  .metric { background: var(--bg); border: 1px solid var(--b); border-radius: 8px; padding: 8px; text-align: center; }
-  .metric span { display: block; font-size: 9.5px; color: var(--m); font-weight: 700; text-transform: uppercase; }
-  .metric strong { font-size: 13px; font-weight: 800; font-family: monospace; }
-  .form-grid { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-bottom: 14px; }
-  .field-group label { display: block; font-size: 10.5px; font-weight: 700; color: var(--m); margin-bottom: 4px; text-transform: uppercase; }
-  .field-group input { width: 100%; padding: 8px; font-size: 12.5px; border: 1.2px solid var(--b); border-radius: 6px; }
-  .btn-commit { width: 100%; background: var(--p); color: #fff; padding: 12px; border: none; border-radius: 8px; font-size: 13.5px; font-weight: 800; cursor: pointer; }
-  .btn-commit:disabled { opacity: 0.5; cursor: not-allowed; }
-</style>
-</head>
-<body>
-<div class="topnav">
-  <div style="font-weight: 800; font-size: 15px;">DataPhi CRM — Cloud Voice Station</div>
-  <div class="navlinks">
-    <a href="/page/voice" class="active">🎙 Voice Station</a>
-    <a href="/page/account">Accounts</a>
-    <a href="/page/subsidiary">Subsidiaries</a>
-    <a href="/page/contact">Contacts</a>
-    <a href="/page/lead">Leads</a>
-    <a href="/page/opportunity">Opportunities</a>
-    <a href="/page/project">Projects</a>
-    <a href="/page/activity">Activity</a>
-  </div>
-</div>
-<div class="wrap">
-  <div class="card">
-    <div class="mic-stage">
-      <button class="mic-btn" id="micBtn"><svg width="26" height="26" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M6 11a6 6 0 0 0 12 0"/><line x1="12" y1="19" x2="12" y2="22"/></svg></button>
-      <div id="micStatus" style="font-weight: 700; font-size: 13px;">Click to Speak (AWS Cloud)</div>
-      <div id="micTimer" style="font-family: monospace; font-size: 12px; color: var(--m); margin-top: 4px;">00:00</div>
-    </div>
-    <div id="clarBox" style="display:none; background: var(--warn); border: 1px solid #FCD34D; border-radius: 8px; padding: 12px; margin-bottom: 14px; font-size: 12px; color: var(--warn-ink); line-height: 1.4;"></div>
-    <div class="t-header"><span>1. Token Telemetry</span><span>Claude Sonnet 5</span></div>
-    <div class="t-grid">
-      <div class="metric"><span>Input</span><strong id="tokIn">0</strong></div>
-      <div class="metric"><span>Output</span><strong id="tokOut">0</strong></div>
-      <div class="metric"><span>Total</span><strong id="tokTot">0</strong></div>
-    </div>
-    <div class="t-header"><span>2. Cost ($ USD)</span><span>Transcribe + Bedrock</span></div>
-    <div class="t-grid">
-      <div class="metric"><span>Transcribe</span><strong id="cTrans">$0.000000</strong></div>
-      <div class="metric"><span>Sonnet 5</span><strong id="cBed">$0.000000</strong></div>
-      <div class="metric"><span>Total</span><strong id="cTot">$0.000000</strong></div>
-    </div>
-    <div class="t-header"><span>3. Latency Benchmarks</span><span>Real-Time</span></div>
-    <div class="t-grid">
-      <div class="metric"><span>Transcribe</span><strong id="lTrans">0 ms</strong></div>
-      <div class="metric"><span>Bedrock</span><strong id="lBed">0 ms</strong></div>
-      <div class="metric"><span>Total</span><strong id="lTot">0 ms</strong></div>
-    </div>
-  </div>
-  <div class="card">
-    <div style="font-size: 14px; font-weight: 800; margin-bottom: 8px;">Extracted Transcript & Entities</div>
-    <div id="transView" style="background: var(--bg); border: 1px solid var(--b); border-radius: 8px; padding: 10px; font-size: 12.5px; color: var(--m); font-style: italic; margin-bottom: 14px;">Spoken transcript will appear here...</div>
-    <div style="font-size: 12px; font-weight: 800; color: var(--pd); margin-bottom: 8px;">1. Account</div>
-    <div class="form-grid">
-      <div class="field-group"><label>Account Name*</label><input type="text" id="acc_name"></div>
-      <div class="field-group"><label>Account Manager</label><input type="text" id="acc_manager"></div>
-      <div class="field-group"><label>Region</label><input type="text" id="acc_region"></div>
-    </div>
-    <div style="font-size: 12px; font-weight: 800; color: var(--pd); margin-bottom: 8px;">2. Contact</div>
-    <div class="form-grid">
-      <div class="field-group"><label>Contact Name*</label><input type="text" id="con_name"></div>
-      <div class="field-group"><label>Designation</label><input type="text" id="con_desig"></div>
-      <div class="field-group"><label>Email</label><input type="text" id="con_email"></div>
-    </div>
-    <div style="font-size: 12px; font-weight: 800; color: var(--pd); margin-bottom: 8px;">3. Opportunity & Lead</div>
-    <div class="form-grid">
-      <div class="field-group"><label>Deal Title</label><input type="text" id="opp_title"></div>
-      <div class="field-group"><label>Value (AED)</label><input type="number" id="opp_val"></div>
-      <div class="field-group"><label>Technology</label><input type="text" id="opp_tech"></div>
-    </div>
-    <button class="btn-commit" id="commitBtn" disabled>Commit to PostgreSQL Database</button>
-  </div>
-</div>
-<script>
-let mr=null, chunks=[], tInt=null, staged=null;
-const btn = document.getElementById("micBtn"), stat = document.getElementById("micStatus"), timer = document.getElementById("micTimer"), cBtn = document.getElementById("commitBtn");
-btn.onclick = async () => {
-  if (mr && mr.state === "recording") {
-    mr.stop(); btn.classList.remove("recording"); stat.textContent = "Processing via AWS..."; clearInterval(tInt);
-  } else {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      chunks = []; mr = new MediaRecorder(stream);
-      mr.ondataavailable = e => { if (e.data.size > 0) chunks.push(e.data); };
-      mr.onstop = async () => {
-        stream.getTracks().forEach(t => t.stop());
-        const form = new FormData();
-        form.append("audio", new Blob(chunks, { type: "audio/webm" }), "voice.webm");
-        const res = await fetch("/api/voice/process", { method: "POST", body: form });
-        const d = await res.json();
-        if (!res.ok) throw new Error(d.detail || "Failed");
-        render(d);
-      };
-      mr.start(); btn.classList.add("recording"); stat.textContent = "Listening... Click to Finish";
-      let s = 0; tInt = setInterval(() => { s++; timer.textContent = `${String(Math.floor(s/60)).padStart(2,'0')}:${String(s%60).padStart(2,'0')}`; }, 1000);
-    } catch(err) { alert("Mic error: " + err.message); }
-  }
-};
-function render(d) {
-  staged = d;
-  const tel = d.telemetry || {}, tok = tel.tokens || {}, c = tel.costs_usd || {}, l = tel.latency || {};
-  document.getElementById("tokIn").textContent = tok.input_tokens || 0;
-  document.getElementById("tokOut").textContent = tok.output_tokens || 0;
-  document.getElementById("tokTot").textContent = tok.total_tokens || 0;
-  document.getElementById("cTrans").textContent = `$${(c.transcribe_cost || 0).toFixed(6)}`;
-  document.getElementById("cBed").textContent = `$${(c.bedrock_cost || 0).toFixed(6)}`;
-  document.getElementById("cTot").textContent = `$${(c.total_cost || 0).toFixed(6)}`;
-  document.getElementById("lTrans").textContent = `${l.transcribe_ms || 0} ms`;
-  document.getElementById("lBed").textContent = `${l.bedrock_ms || 0} ms`;
-  document.getElementById("lTot").textContent = `${l.backend_total_ms || 0} ms`;
-  document.getElementById("transView").textContent = `"${d.transcript || ''}"`;
-  const ext = d.extracted_data || {}, a = ext.account || {}, co = ext.contact || {}, o = ext.opportunity || {}, le = ext.lead || {};
-  document.getElementById("acc_name").value = a.account_name || "";
-  document.getElementById("acc_manager").value = a.account_manager || "";
-  document.getElementById("acc_region").value = a.region || "";
-  document.getElementById("con_name").value = co.contact_name || "";
-  document.getElementById("con_desig").value = co.designation || "";
-  document.getElementById("con_email").value = co.email || "";
-  document.getElementById("opp_title").value = o.opportunity_name || le.lead_name || "";
-  document.getElementById("opp_val").value = o.deal_size || le.deal_size || "";
-  document.getElementById("opp_tech").value = o.technology || le.technology || "";
-  const box = document.getElementById("clarBox");
-  if (d.missing_fields && d.missing_fields.length > 0) {
-    box.style.display = "block"; box.textContent = "⚠️ Incomplete Draft: " + d.clarification_prompt;
-    cBtn.disabled = true;
-  } else {
-    box.style.display = "none"; cBtn.disabled = false;
-  }
-  stat.textContent = "Click to Speak (AWS Cloud)";
-}
-cBtn.onclick = async () => {
-  if (!staged) return;
-  const payload = {
-    draft_id: staged.draft_id, intent: staged.intent,
-    account: { account_name: document.getElementById("acc_name").value.trim(), account_manager: document.getElementById("acc_manager").value.trim(), region: document.getElementById("acc_region").value.trim() },
-    contact: { contact_name: document.getElementById("con_name").value.trim(), designation: document.getElementById("con_desig").value.trim(), email: document.getElementById("con_email").value.trim() },
-    lead: { lead_name: document.getElementById("opp_title").value.trim(), deal_size: document.getElementById("opp_val").value || null, technology: document.getElementById("opp_tech").value.trim() },
-    opportunity: { opportunity_name: document.getElementById("opp_title").value.trim(), deal_size: document.getElementById("opp_val").value || null, technology: document.getElementById("opp_tech").value.trim() }
-  };
-  const res = await fetch("/api/voice/commit", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(payload) });
-  const d = await res.json();
-  if (!res.ok) alert("Commit failed: " + (d.detail || "Error"));
-  else { alert("Committed successfully to PostgreSQL!"); cBtn.disabled = true; }
-};
-</script>
-</body>
-</html>
-"""
+@app.get("/{full_path:path}")
+def serve_spa(full_path: str):
+    # An unmatched /api/* path is a real 404, not a client route — never mask it with the SPA shell.
+    if full_path.startswith("api/"):
+        raise HTTPException(404, "Not found.")
+
+    index_file = FRONTEND_DIST_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(404, "Frontend build not found. Run `npm run build` in frontend/.")
+
+    # Serve a real dist-root file (favicon.svg, icons.svg, ...) directly when the
+    # request matches one; otherwise fall back to index.html for client-side routing.
+    candidate = (FRONTEND_DIST_DIR / full_path).resolve()
+    if full_path and candidate.is_file() and FRONTEND_DIST_DIR.resolve() in candidate.parents:
+        return FileResponse(str(candidate))
+
+    return FileResponse(str(index_file))

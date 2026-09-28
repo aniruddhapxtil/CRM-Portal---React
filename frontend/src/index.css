@@ -1,0 +1,100 @@
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-mono: "IBM Plex Mono", "SF Mono", monospace;
+
+  /* Brand — deep teal to soft mint (theme/colors.ts is the canonical source) */
+  --color-brand: #14b8a6; /* blue.main — primary actions */
+  --color-brand-light: #5eead4; /* blue.light — hovers */
+  --color-brand-lighter: #99f6e4; /* blue.lightest */
+  --color-brand-cyan: #06e1b0; /* extras.tealAlt / tab.hoverBg / collapsible.headerBg */
+  --color-brand-tint: #e8f9f1; /* background.accentLight */
+
+  /* Neutrals — warm off-white surfaces */
+  --color-ink: #0a5647; /* blue.darkest — "deep teal for text" */
+  --color-muted: #7a7a7a; /* extras.gray */
+  --color-border: #e5e1d8; /* between surface.card and surface.sidebarHover */
+  --color-surface: #fafaf8; /* surface.card */
+  --color-canvas: #f8f7f4; /* surface.warm */
+
+  /* Semantic */
+  --color-danger: #d14545;
+  --color-danger-light: #fbeaea;
+  --color-warning: #c98a14;
+  --color-warning-light: #fbf3de;
+  --color-success: #0a7d3e; /* preview.text / keyboard.text / breadcrumb.text */
+  --color-success-light: #e8f9f1;
+}
+
+:root {
+  --nav-gradient: linear-gradient(135deg, #007fcd 0%, #06e1b0 100%); /* extras.blueAccent -> brand-cyan: blue to green */
+  --nav-active-bg: #0a1a2f; /* blackish-blue highlight for the active/hovered nav tab */
+  --glass-bg: rgba(255, 255, 255, 0.7);
+  --glass-bg-dark: rgba(31, 41, 55, 0.85); /* glass.backgroundDark, darkened further for panel legibility */
+  --glass-blur: blur(12px);
+  --glass-border: rgba(6, 225, 176, 0.2);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.08);
+
+  --breadcrumb-bg: #f0fdf795;
+  --breadcrumb-border: #06e1b0;
+  --breadcrumb-text: #0a7d3e;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  background: var(--color-canvas);
+  color: var(--color-ink);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+.nav-gradient {
+  background: var(--nav-gradient);
+}
+
+.breadcrumb-pill {
+  background: var(--breadcrumb-bg);
+  border: 1px solid var(--breadcrumb-border);
+  color: var(--breadcrumb-text);
+}
+
+/* Touch targets: every interactive control in the shared widget kit should clear this. */
+.tap-target {
+  min-height: 44px;
+}
+
+/* Glass morphism panel — used by Modal and other floating surfaces. */
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+/* Darker glass variant (glass.backgroundDark) — used by the notification panel. */
+.glass-panel-dark {
+  background: var(--glass-bg-dark);
+  backdrop-filter: var(--glass-blur);
+  -webkit-backdrop-filter: var(--glass-blur);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+}
+
+/* Hide number input spinner arrows so short values never get clipped behind them. */
+input[type="number"] {
+  appearance: textfield;
+  -moz-appearance: textfield;
+}
+input[type="number"]::-webkit-outer-spin-button,
+input[type="number"]::-webkit-inner-spin-button {
+  appearance: none;
+  -webkit-appearance: none;
+  margin: 0;
+}
