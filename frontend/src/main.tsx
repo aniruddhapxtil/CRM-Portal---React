@@ -5,15 +5,18 @@ import "./index.css";
 import App from "./App.tsx";
 import { ToastProvider } from "./components/ui/Toast";
 import { NotificationProvider } from "./context/NotificationContext";
+import { ThemeProvider } from "./context/ThemeContext";
 
 createRoot(document.getElementById("root")!).render(
   <StrictMode>
     <BrowserRouter>
-      <ToastProvider>
-        <NotificationProvider>
-          <App />
-        </NotificationProvider>
-      </ToastProvider>
+      <ThemeProvider>
+        <ToastProvider>
+          <NotificationProvider>
+            <App />
+          </NotificationProvider>
+        </ToastProvider>
+      </ThemeProvider>
     </BrowserRouter>
   </StrictMode>,
 );

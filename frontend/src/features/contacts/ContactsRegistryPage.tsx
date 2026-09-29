@@ -41,9 +41,9 @@ export function ContactsRegistryPage() {
     { key: "email", header: "Email", render: (r) => r.email ?? "N/A" },
     { key: "account", header: "Parent Account", render: (r) => r.account_name },
     {
-      key: "subsidiary",
-      header: "Subsidiary",
-      render: (r) => (r.subsidiary_name ? <Badge>{r.subsidiary_name}</Badge> : <Badge tone="neutral">Direct</Badge>),
+      key: "mobile",
+      header: "Phone",
+      render: (r) => (r.mobile ? `${r.mobile_country_code ?? ""} ${r.mobile}`.trim() : "N/A"),
     },
     {
       key: "action",
@@ -82,6 +82,7 @@ export function ContactsRegistryPage() {
           r.contact_name.toLowerCase().includes(q) ||
           (r.designation ?? "").toLowerCase().includes(q) ||
           (r.email ?? "").toLowerCase().includes(q) ||
+          (r.mobile ?? "").toLowerCase().includes(q) ||
           r.account_name.toLowerCase().includes(q)
         }
         emptyMessage={loading ? "Loading contacts…" : "No contacts yet."}

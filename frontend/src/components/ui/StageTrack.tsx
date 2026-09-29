@@ -29,9 +29,9 @@ export function StageTrack({ stage, onStageChange, onMarkWon, onMarkLost }: Stag
               type="button"
               key={s}
               onClick={() => onStageChange(s)}
-              className={`tap-target rounded-full border px-4 text-sm font-semibold transition-colors ${
+              className={`tap-target rounded-full border px-4 text-sm font-semibold transition-all duration-150 hover:scale-[1.04] active:scale-[0.98] ${
                 current
-                  ? "border-brand bg-brand text-ink"
+                  ? "border-brand bg-brand text-ink shadow-sm"
                   : done
                     ? "border-brand/50 bg-brand-tint text-ink"
                     : "border-border bg-surface text-muted hover:bg-canvas"

@@ -76,7 +76,7 @@ export function DataTable<T>({
                   <tr
                     key={getRowId(row)}
                     onClick={() => onRowClick?.(row)}
-                    className={`border-b border-border/70 last:border-0 ${onRowClick ? "cursor-pointer hover:bg-canvas/60" : ""}`}
+                    className={`border-b border-border/70 last:border-0 transition-colors duration-150 ${onRowClick ? "cursor-pointer hover:bg-brand-tint/50" : ""}`}
                   >
                     {columns.map((c) => (
                       <td key={c.key} className="px-4 py-3">
@@ -95,7 +95,7 @@ export function DataTable<T>({
               <div
                 key={getRowId(row)}
                 onClick={() => onRowClick?.(row)}
-                className={`tap-target flex flex-col gap-1.5 p-4 ${onRowClick ? "cursor-pointer active:bg-canvas" : ""}`}
+                className={`tap-target flex flex-col gap-1.5 p-4 transition-colors duration-150 ${onRowClick ? "cursor-pointer active:bg-canvas" : ""}`}
               >
                 <div className="font-semibold text-ink">{primaryCol.render(row)}</div>
                 {restCols.map((c) => (

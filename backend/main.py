@@ -1,4 +1,5 @@
 import asyncio
+import io
 import json
 import mimetypes
 import os
@@ -7,6 +8,7 @@ import smtplib
 import subprocess
 import tempfile
 import time
+import wave
 from datetime import date, datetime, timedelta
 from decimal import Decimal
 from email.mime.multipart import MIMEMultipart
@@ -14,10 +16,7 @@ from email.mime.text import MIMEText
 from functools import lru_cache
 from pathlib import Path
 
-import boto3
-from amazon_transcribe.client import TranscribeStreamingClient
-from amazon_transcribe.handlers import TranscriptResultStreamHandler
-from amazon_transcribe.model import TranscriptEvent
+import httpx
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -54,8 +53,9 @@ from sqlalchemy.orm import (
 
 class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://voicecrm:voicecrm@localhost:5432/voicecrm"
-    aws_region: str = "us-east-2"
-    bedrock_model_id: str = "us.anthropic.claude-sonnet-5"
+    sarvam_api_key: str = ""
+    sarvam_stt_model: str = "saaras:v3"
+    sarvam_chat_model: str = "sarvam-105b"
     max_audio_mb: int = 25
     cors_origins: str = "http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000"
 
@@ -65,7 +65,11 @@ class Settings(BaseSettings):
     smtp_password: str = "your-app-password"
     enable_notifications: bool = False
 
-    model_config = SettingsConfigDict(env_file=".env", extra="ignore")
+    # Absolute path — "env_file='.env'" resolves against the process's CWD, not this file's
+    # location, so launching uvicorn from the repo root (rather than backend/) silently
+    # skipped backend/.env entirely (only unnoticed until now because DATABASE_URL/CORS_ORIGINS
+    # defaults happened to match what's in that file).
+    model_config = SettingsConfigDict(env_file=Path(__file__).resolve().parent / ".env", extra="ignore")
 
     @property
     def origins(self):
@@ -1016,94 +1020,98 @@ def parse_json(text: str):
 
 
 # =====================================================================
-# AWS Transcribe Streaming Implementation
+# Sarvam AI Speech-to-Text Implementation (Saaras)
 # =====================================================================
 
-class _TranscriptStreamAccumulator(TranscriptResultStreamHandler):
-    def __init__(self, transcript_result_stream):
-        super().__init__(transcript_result_stream)
-        self.text_parts = []
-
-    async def handle_transcript_event(self, transcript_event: TranscriptEvent):
-        for result in transcript_event.transcript.results:
-            if not result.is_partial:
-                for alt in result.alternatives:
-                    self.text_parts.append(alt.transcript)
+SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
+SARVAM_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions"
 
 
-class AWSTranscribeService:
-    def __init__(self, region: str):
-        self.region = region
-        self.client = TranscribeStreamingClient(region=region)
+def _decode_utf8_json(response: httpx.Response):
+    """Sarvam's JSON responses come back without an explicit charset on the
+    Content-Type header; httpx's own encoding-guess can then mis-decode
+    multi-byte UTF-8 characters (e.g. em-dashes) as Latin-1, producing mojibake.
+    JSON is UTF-8 by spec (RFC 8259) — decode explicitly instead of guessing."""
+    return json.loads(response.content.decode("utf-8"))
 
-    async def transcribe_pcm_bytes(self, pcm_bytes: bytes) -> str:
-        stream = await self.client.start_stream_transcription(
-            language_code="en-US",
-            media_sample_rate_hz=16000,
-            media_encoding="pcm",
-        )
-        handler = _TranscriptStreamAccumulator(stream.output_stream)
 
-        async def write_chunks():
-            chunk_size = 1024 * 8
-            for i in range(0, len(pcm_bytes), chunk_size):
-                await stream.input_stream.send_audio_event(audio_chunk=pcm_bytes[i:i + chunk_size])
-            await stream.input_stream.end_stream()
+class SarvamSTTService:
+    """Batch REST transcription via Sarvam's Saaras models. We record a full clip
+    client-side and POST it once processing finishes, so the batch endpoint (not
+    Sarvam's WebSocket streaming endpoint) is the right fit — same shape as the
+    AWS Transcribe call this replaces."""
 
-        await asyncio.gather(write_chunks(), handler.handle_events())
-        transcript = " ".join(handler.text_parts).strip()
+    def __init__(self, api_key: str, model: str):
+        self.api_key = api_key
+        self.model = model
+
+    async def transcribe(self, wav_bytes: bytes) -> str:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                SARVAM_STT_URL,
+                headers={"api-subscription-key": self.api_key},
+                files={"file": ("audio.wav", wav_bytes, "audio/wav")},
+                data={"model": self.model, "language_code": "unknown"},
+            )
+        if response.status_code >= 400:
+            raise ValueError(f"Sarvam STT request failed ({response.status_code}): {response.content.decode('utf-8', errors='replace')}")
+
+        transcript = (_decode_utf8_json(response).get("transcript") or "").strip()
         if not transcript:
-            raise ValueError("Amazon Transcribe completed, but detected no speech in the recording.")
+            raise ValueError("Sarvam STT completed, but detected no speech in the recording.")
         return transcript
 
 
 # =====================================================================
-# AWS Bedrock Claude Sonnet 5 Implementation
+# Sarvam AI Chat Completions Implementation (Sarvam-105B)
 # =====================================================================
 
-class AWSBedrockService:
-    def __init__(self, region: str, model_id: str):
-        self.region = region
-        self.model_id = model_id
-        self.client = boto3.client("bedrock-runtime", region_name=region)
+class SarvamChatService:
+    """Structured-extraction LLM call via Sarvam's OpenAI-compatible chat
+    completions endpoint (JSON mode), replacing the AWS Bedrock/Claude call."""
 
-    def extract(self, transcript: str):
-        response = self.client.converse(
-            modelId=self.model_id,
-            messages=[
-                {
-                    "role": "user",
-                    "content": [
+    def __init__(self, api_key: str, model: str):
+        self.api_key = api_key
+        self.model = model
+
+    async def extract(self, transcript: str):
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            response = await client.post(
+                SARVAM_CHAT_URL,
+                headers={
+                    "Authorization": f"Bearer {self.api_key}",
+                    "api-subscription-key": self.api_key,
+                    "Content-Type": "application/json",
+                },
+                json={
+                    "model": self.model,
+                    "messages": [
+                        {"role": "system", "content": SYSTEM_PROMPT},
                         {
-                            "text": f"Reference date: {date.today().isoformat()}\nTranscript: {transcript}\nOutput JSON strictly according to instructions:"
-                        }
+                            "role": "user",
+                            "content": f"Reference date: {date.today().isoformat()}\nTranscript: {transcript}\nOutput JSON strictly according to instructions:",
+                        },
                     ],
-                }
-            ],
-            system=[{"text": SYSTEM_PROMPT}],
-            inferenceConfig={"maxTokens": 4096},  # Increased token headroom for longer clips
-        )
+                    "temperature": 0.2,
+                    "max_tokens": 8192,  # sarvam-105b spends part of the budget on reasoning_content before the final JSON
+                    "reasoning_effort": "low",
+                    "response_format": {"type": "json_object"},
+                },
+            )
+        if response.status_code >= 400:
+            raise ValueError(f"Sarvam chat completion request failed ({response.status_code}): {response.content.decode('utf-8', errors='replace')}")
 
-        # Safely extract text across all content blocks (handles reasoningContent blocks)
-        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
-        raw_text = ""
-        for block in content_blocks:
-            if isinstance(block, dict) and "text" in block:
-                raw_text += block["text"]
-
-        # Fallback: if no direct text block was returned, check reasoningContent
-        if not raw_text:
-            for block in content_blocks:
-                if isinstance(block, dict) and "reasoningContent" in block:
-                    raw_text += block.get("reasoningContent", {}).get("reasoningText", {}).get("text", "")
+        data = _decode_utf8_json(response)
+        choice = (data.get("choices") or [{}])[0]
+        raw_text = (choice.get("message") or {}).get("content") or ""
 
         if not raw_text:
-            stop_reason = response.get("stopReason", "unknown")
-            raise ValueError(f"Bedrock returned no text content (stopReason: {stop_reason}).")
+            finish_reason = choice.get("finish_reason", "unknown")
+            raise ValueError(f"Sarvam chat completion returned no text content (finish_reason: {finish_reason}).")
 
-        usage = response.get("usage", {})
-        input_tokens = usage.get("inputTokens", 0)
-        output_tokens = usage.get("outputTokens", 0)
+        usage = data.get("usage", {})
+        input_tokens = usage.get("prompt_tokens", 0)
+        output_tokens = usage.get("completion_tokens", 0)
 
         parsed_data = parse_json(raw_text)
         payload = FullLifecycleVoicePayload.model_validate(parsed_data)
@@ -1142,31 +1150,34 @@ def log_telemetry_entry(entry: dict):
         json.dump(logs, f, indent=2, default=str)
 
 
-def convert_to_pcm_16k(input_path: str) -> tuple[bytes, float]:
+def convert_to_wav_16k(input_path: str) -> tuple[bytes, float]:
+    """Normalizes any uploaded audio container to mono 16kHz WAV — a self-describing
+    file Sarvam's multipart upload can decode directly (unlike headerless raw PCM)."""
     try:
         import imageio_ffmpeg
         ffmpeg_bin = imageio_ffmpeg.get_ffmpeg_exe()
     except Exception:
         ffmpeg_bin = "ffmpeg"
 
-    out_path = input_path + ".pcm"
+    out_path = input_path + ".wav"
     cmd = [
         ffmpeg_bin, "-y", "-i", input_path,
-        "-f", "s16le", "-ac", "1", "-ar", "16000",
+        "-ac", "1", "-ar", "16000", "-f", "wav",
         out_path
     ]
     subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
     with open(out_path, "rb") as f:
-        pcm_bytes = f.read()
+        wav_bytes = f.read()
 
     try:
         os.remove(out_path)
     except FileNotFoundError:
         pass
 
-    duration_sec = len(pcm_bytes) / 32000.0
-    return pcm_bytes, duration_sec
+    with wave.open(io.BytesIO(wav_bytes)) as w:
+        duration_sec = w.getnframes() / float(w.getframerate())
+    return wav_bytes, duration_sec
 
 
 def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) -> dict:
@@ -1461,8 +1472,8 @@ app.add_middleware(
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
 
-_transcribe_service = None
-_bedrock_service = None
+_stt_service = None
+_chat_service = None
 
 
 def run_schema_migrations():
@@ -1578,18 +1589,18 @@ def run_schema_migrations():
 def startup():
     Base.metadata.create_all(bind=engine)
     run_schema_migrations()
-    global _transcribe_service, _bedrock_service
-    _transcribe_service = AWSTranscribeService(region=settings().aws_region)
-    _bedrock_service = AWSBedrockService(region=settings().aws_region, model_id=settings().bedrock_model_id)
+    global _stt_service, _chat_service
+    _stt_service = SarvamSTTService(api_key=settings().sarvam_api_key, model=settings().sarvam_stt_model)
+    _chat_service = SarvamChatService(api_key=settings().sarvam_api_key, model=settings().sarvam_chat_model)
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "provider": "AWS Managed",
-        "transcribe_region": settings().aws_region,
-        "bedrock_model": settings().bedrock_model_id,
+        "provider": "Sarvam AI",
+        "stt_model": settings().sarvam_stt_model,
+        "chat_model": settings().sarvam_chat_model,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -2481,7 +2492,7 @@ async def process_voice(
     if len(data) > settings().max_audio_mb * 1024 * 1024:
         raise HTTPException(413, f"Audio file exceeds {settings().max_audio_mb} MB limit.")
 
-    fd, path = tempfile.mkstemp(prefix="aws_voice_", suffix=os.path.splitext(audio.filename or ".webm")[1])
+    fd, path = tempfile.mkstemp(prefix="sarvam_voice_", suffix=os.path.splitext(audio.filename or ".webm")[1])
     os.close(fd)
     start_total = time.perf_counter()
 
@@ -2489,29 +2500,29 @@ async def process_voice(
         with open(path, "wb") as f:
             f.write(data)
 
-        pcm_bytes, duration_sec = convert_to_pcm_16k(path)
+        wav_bytes, duration_sec = convert_to_wav_16k(path)
 
         start_transcribe = time.perf_counter()
-        transcript = await _transcribe_service.transcribe_pcm_bytes(pcm_bytes)
+        transcript = await _stt_service.transcribe(wav_bytes)
         transcribe_ms = int((time.perf_counter() - start_transcribe) * 1000)
 
-        start_bedrock = time.perf_counter()
-        payload, input_tokens, output_tokens = _bedrock_service.extract(transcript)
-        bedrock_ms = int((time.perf_counter() - start_bedrock) * 1000)
+        start_llm = time.perf_counter()
+        payload, input_tokens, output_tokens = await _chat_service.extract(transcript)
+        llm_ms = int((time.perf_counter() - start_llm) * 1000)
         total_ms = int((time.perf_counter() - start_total) * 1000)
 
         deterministic_transcript_fallback(payload, transcript)
         missing_fields, clarification_prompt = evaluate_mandatory_fields(payload, transcript)
 
-        # AWS Transcribe: $0.024/minute, 15-second minimum billing increment
+        # Sarvam Saaras STT: ₹30/hour, 15-second minimum billing increment
         billable_seconds = max(15.0, duration_sec)
-        transcribe_cost = (billable_seconds / 60.0) * 0.024
+        stt_cost = (billable_seconds / 3600.0) * 30.0
 
-        # AWS Bedrock Claude Sonnet 5: $2.00/1M input tokens, $10.00/1M output tokens
-        bedrock_input_cost = (input_tokens / 1_000_000.0) * 2.0
-        bedrock_output_cost = (output_tokens / 1_000_000.0) * 10.0
-        bedrock_cost = bedrock_input_cost + bedrock_output_cost
-        total_cost = transcribe_cost + bedrock_cost
+        # Sarvam-105B chat completions: ₹29.28/1M input tokens, ₹73.20/1M output tokens
+        llm_input_cost = (input_tokens / 1_000_000.0) * 29.28
+        llm_output_cost = (output_tokens / 1_000_000.0) * 73.20
+        llm_cost = llm_input_cost + llm_output_cost
+        total_cost = stt_cost + llm_cost
 
         extracted_dict = payload.model_dump(mode="json")
         for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
@@ -2547,9 +2558,9 @@ async def process_voice(
                 "output_tokens": output_tokens,
                 "total_tokens": input_tokens + output_tokens,
             },
-            "costs_usd": {
-                "transcribe_cost": round(transcribe_cost, 6),
-                "bedrock_cost": round(bedrock_cost, 6),
+            "costs_inr": {
+                "stt_cost": round(stt_cost, 6),
+                "llm_cost": round(llm_cost, 6),
                 "total_cost": round(total_cost, 6),
                 "details": {
                     "audio_duration_sec": round(duration_sec, 2),
@@ -2558,7 +2569,7 @@ async def process_voice(
             },
             "latency": {
                 "transcribe_ms": transcribe_ms,
-                "bedrock_ms": bedrock_ms,
+                "llm_ms": llm_ms,
                 "backend_total_ms": total_ms,
             },
         }
@@ -2615,9 +2626,9 @@ async def resume_voice_draft(
         try:
             with open(path, "wb") as f:
                 f.write(await additional_audio.read())
-            pcm_bytes, duration_sec = convert_to_pcm_16k(path)
+            wav_bytes, duration_sec = convert_to_wav_16k(path)
             t_t0 = time.perf_counter()
-            supplementary_text = await _transcribe_service.transcribe_pcm_bytes(pcm_bytes)
+            supplementary_text = await _stt_service.transcribe(wav_bytes)
             transcribe_ms = int((time.perf_counter() - t_t0) * 1000)
         finally:
             if os.path.exists(path):
@@ -2628,19 +2639,19 @@ async def resume_voice_draft(
         raise HTTPException(400, "Provide supplementary audio or text input.")
 
     merged_transcript = f"{draft.raw_transcript}. Follow-up details: {supplementary_text}"
-    t_bed0 = time.perf_counter()
-    updated_payload, input_tokens, output_tokens = _bedrock_service.extract(merged_transcript)
-    bedrock_ms = int((time.perf_counter() - t_bed0) * 1000)
+    t_llm0 = time.perf_counter()
+    updated_payload, input_tokens, output_tokens = await _chat_service.extract(merged_transcript)
+    llm_ms = int((time.perf_counter() - t_llm0) * 1000)
 
     deterministic_transcript_fallback(updated_payload, merged_transcript)
     missing_fields, clarification_prompt = evaluate_mandatory_fields(updated_payload, merged_transcript)
     total_backend_ms = int((time.perf_counter() - started) * 1000)
 
     billable_seconds = max(15.0, duration_sec) if duration_sec > 0 else 0.0
-    transcribe_cost = (billable_seconds / 60.0) * 0.024 if billable_seconds > 0 else 0.0
+    stt_cost = (billable_seconds / 3600.0) * 30.0 if billable_seconds > 0 else 0.0
 
-    bedrock_cost = ((input_tokens / 1_000_000.0) * 2.0) + ((output_tokens / 1_000_000.0) * 10.0)
-    total_cost = transcribe_cost + bedrock_cost
+    llm_cost = ((input_tokens / 1_000_000.0) * 29.28) + ((output_tokens / 1_000_000.0) * 73.20)
+    total_cost = stt_cost + llm_cost
 
     extracted_dict = updated_payload.model_dump(mode="json")
     for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
@@ -2660,14 +2671,14 @@ async def resume_voice_draft(
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         },
-        "costs_usd": {
-            "transcribe_cost": round(transcribe_cost, 6),
-            "bedrock_cost": round(bedrock_cost, 6),
+        "costs_inr": {
+            "stt_cost": round(stt_cost, 6),
+            "llm_cost": round(llm_cost, 6),
             "total_cost": round(total_cost, 6),
         },
         "latency": {
             "transcribe_ms": transcribe_ms,
-            "bedrock_ms": bedrock_ms,
+            "llm_ms": llm_ms,
             "backend_total_ms": total_backend_ms,
         },
     }

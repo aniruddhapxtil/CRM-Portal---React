@@ -1,0 +1,86 @@
+[
+  {
+    "timestamp": "2026-09-29T00:07:50.359938",
+    "draft_id": 11,
+    "intent": "create_lead",
+    "transcript": "Create a new lead for Emirates Steel, contact is John Smith, procurement head, deal size 200,000 dirhams, using AWS.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1232,
+        "output_tokens": 2950,
+        "total_tokens": 4182
+      },
+      "costs_inr": {
+        "stt_cost": 0.125,
+        "llm_cost": 0.252013,
+        "total_cost": 0.377013,
+        "details": {
+          "audio_duration_sec": 9.56,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 2852,
+        "llm_ms": 15792,
+        "backend_total_ms": 21073
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-29T00:09:20.278298",
+    "draft_id": 12,
+    "intent": "create_lead",
+    "transcript": "Create a new lead for Emirates Steel, contact is John Smith, procurement head, deal size 200,000 dirhams, using AWS.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1232,
+        "output_tokens": 2954,
+        "total_tokens": 4186
+      },
+      "costs_inr": {
+        "stt_cost": 0.125,
+        "llm_cost": 0.252306,
+        "total_cost": 0.377306,
+        "details": {
+          "audio_duration_sec": 9.56,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1531,
+        "llm_ms": 26079,
+        "backend_total_ms": 27720
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-29T00:12:08.901313",
+    "draft_id": 13,
+    "intent": "create_account",
+    "transcript": "Create an account in the name of Mercedes-Benz. The account manager is Mr. Daimler and the region of operation is Abu Dhabi.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1227,
+        "output_tokens": 6143,
+        "total_tokens": 7370
+      },
+      "costs_inr": {
+        "stt_cost": 0.125,
+        "llm_cost": 0.485594,
+        "total_cost": 0.610594,
+        "details": {
+          "audio_duration_sec": 9.6,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1698,
+        "llm_ms": 39239,
+        "backend_total_ms": 41023
+      }
+    }
+  }
+]

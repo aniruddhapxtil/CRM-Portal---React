@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationContext";
+import { useTheme } from "../../context/ThemeContext";
 
 const NAV_LINKS = [
   { to: "/voice", label: "Voice Station" },
@@ -19,7 +20,7 @@ function NavLinkItem({ to, label, onClick }: { to: string; label: string; onClic
       to={to}
       onClick={onClick}
       className={({ isActive }) =>
-        `tap-target flex items-center rounded-md px-3 text-sm font-semibold transition-colors ${
+        `tap-target flex items-center rounded-md px-3 text-sm font-semibold transition-colors duration-200 ${
           isActive
             ? "bg-[var(--nav-active-bg)] text-white"
             : "text-white/70 hover:bg-[var(--nav-active-bg)] hover:text-white"
@@ -49,7 +50,7 @@ function NotificationBell() {
     <div className="relative">
       <button
         type="button"
-        className="tap-target relative flex items-center justify-center rounded-md px-2 text-white/80 hover:bg-white/10 hover:text-white"
+        className="tap-target relative flex items-center justify-center rounded-md px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white"
         aria-label="Notifications"
         onClick={() => setOpen((o) => !o)}
       >
@@ -58,7 +59,7 @@ function NotificationBell() {
           <path d="M13.73 21a2 2 0 0 1-3.46 0" strokeLinecap="round" strokeLinejoin="round" />
         </svg>
         {notifications.length > 0 && (
-          <span className="absolute right-0 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
+          <span className="notif-pulse absolute right-0 top-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-danger px-1 text-[10px] font-bold text-white">
             {notifications.length}
           </span>
         )}
@@ -67,7 +68,7 @@ function NotificationBell() {
       {open && (
         <>
           <div className="fixed inset-0 z-40" onClick={() => setOpen(false)} />
-          <div className="glass-panel-dark absolute right-0 z-50 mt-2 w-80 max-w-[90vw] overflow-hidden rounded-xl">
+          <div className="glass-panel-dark animate-fade-in absolute right-0 z-50 mt-2 w-80 max-w-[90vw] overflow-hidden rounded-xl">
             <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
               <span className="text-sm font-extrabold text-white">Notifications</span>
               {notifications.length > 0 && (
@@ -118,6 +119,48 @@ function NotificationBell() {
   );
 }
 
+function ThemeToggle() {
+  const { theme, toggleTheme } = useTheme();
+  const isDark = theme === "dark";
+
+  return (
+    <button
+      type="button"
+      onClick={toggleTheme}
+      aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      title={isDark ? "Switch to light mode" : "Switch to dark mode"}
+      className="tap-target relative flex items-center justify-center overflow-hidden rounded-md px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+    >
+      <svg
+        width="19"
+        height="19"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className={`absolute transition-all duration-300 ${isDark ? "-rotate-90 scale-0 opacity-0" : "rotate-0 scale-100 opacity-100"}`}
+      >
+        <circle cx="12" cy="12" r="4" />
+        <path
+          d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M4.93 19.07l1.41-1.41M17.66 6.34l1.41-1.41"
+          strokeLinecap="round"
+        />
+      </svg>
+      <svg
+        width="19"
+        height="19"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        strokeWidth="2"
+        className={`absolute transition-all duration-300 ${isDark ? "rotate-0 scale-100 opacity-100" : "rotate-90 scale-0 opacity-0"}`}
+      >
+        <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79Z" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
 export function TopNav() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -125,7 +168,7 @@ export function TopNav() {
     <header className="nav-gradient sticky top-0 z-30">
       <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-4 sm:px-6">
         <div className="flex shrink-0 items-center rounded-lg bg-white/95 px-2.5 py-1.5 shadow-sm">
-          <img src="/site-logo.svg" alt="DataPhi CRM" className="h-6 w-auto" />
+          <img src="/dataphi-logo-new.png" alt="DataPhi CRM" className="h-7 w-auto" />
         </div>
 
         <nav className="ml-4 hidden flex-1 items-center gap-1 lg:flex">
@@ -135,10 +178,11 @@ export function TopNav() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1">
+          <ThemeToggle />
           <NotificationBell />
           <button
             type="button"
-            className="tap-target flex items-center justify-center rounded-md px-2 text-white lg:hidden"
+            className="tap-target flex items-center justify-center rounded-md px-2 text-white transition-colors duration-200 hover:bg-white/10 lg:hidden"
             aria-label="Open menu"
             onClick={() => setDrawerOpen(true)}
           >
@@ -151,8 +195,8 @@ export function TopNav() {
 
       {drawerOpen && (
         <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
-          <div className="nav-gradient absolute right-0 top-0 flex h-full w-72 flex-col gap-1 p-4">
+          <div className="animate-fade-in absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
+          <div className="nav-gradient animate-slide-in-right absolute right-0 top-0 flex h-full w-72 flex-col gap-1 p-4">
             <button
               type="button"
               className="tap-target mb-2 ml-auto flex items-center justify-center rounded-md px-2 text-white"

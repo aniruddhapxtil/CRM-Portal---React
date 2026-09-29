@@ -23,13 +23,15 @@
   --color-danger-light: #fbeaea;
   --color-warning: #c98a14;
   --color-warning-light: #fbf3de;
-  --color-success: #0a7d3e; /* preview.text / keyboard.text / breadcrumb.text */
+  --color-success: #02ab65; /* data-phi.ai/phi-genai-ai-and-ml — dark green accent used on that page */
   --color-success-light: #e8f9f1;
 }
 
 :root {
-  --nav-gradient: linear-gradient(135deg, #007fcd 0%, #06e1b0 100%); /* extras.blueAccent -> brand-cyan: blue to green */
-  --nav-active-bg: #0a1a2f; /* blackish-blue highlight for the active/hovered nav tab */
+  --nav-gradient: linear-gradient(135deg, #000000 0%, #06e1b0 100%); /* black to DataPhi green fade */
+  --nav-active-bg: #08de87; /* bright DataPhi green highlight for the active/hovered nav tab — text stays white */
+  /* CTA button gradient, lifted directly from data-phi.ai/phi-genai-ai-and-ml's own buttons. */
+  --cta-gradient: linear-gradient(180deg, #0dd82f 0%, #08de87 100%);
   --glass-bg: rgba(255, 255, 255, 0.7);
   --glass-bg-dark: rgba(31, 41, 55, 0.85); /* glass.backgroundDark, darkened further for panel legibility */
   --glass-blur: blur(12px);
@@ -39,6 +41,41 @@
   --breadcrumb-bg: #f0fdf795;
   --breadcrumb-border: #06e1b0;
   --breadcrumb-text: #0a7d3e;
+}
+
+/* ---------- Dark mode ----------
+   Inspired by data-phi.ai/contact-us/'s own dark section (near-black #020101/#212121
+   with the same #02AB65 green accent) — same DataPhi brand hues, re-tuned for contrast
+   on a dark canvas. Overrides every semantic token so components need zero dark: variants. */
+:root[data-theme="dark"] {
+  --color-brand: #2dd4bf;
+  --color-brand-light: #5eead4;
+  --color-brand-lighter: #99f6e4;
+  --color-brand-cyan: #06e1b0;
+  --color-brand-tint: rgba(6, 225, 176, 0.14);
+
+  --color-ink: #eef5f3;
+  --color-muted: #93a29c;
+  --color-border: #2a3733;
+  --color-surface: #161d1a;
+  --color-canvas: #0a0e0c;
+
+  --color-danger: #f0716f;
+  --color-danger-light: rgba(240, 113, 111, 0.16);
+  --color-warning: #e5ac4d;
+  --color-warning-light: rgba(229, 172, 77, 0.16);
+  --color-success: #22c55e;
+  --color-success-light: rgba(34, 197, 94, 0.16);
+
+  --glass-bg: rgba(22, 29, 26, 0.75);
+  --glass-bg-dark: rgba(6, 10, 9, 0.9);
+  --glass-border: rgba(6, 225, 176, 0.25);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+
+  --breadcrumb-bg: rgba(6, 225, 176, 0.12);
+  --breadcrumb-text: #5eead4;
+
+  color-scheme: dark;
 }
 
 html,
@@ -52,6 +89,9 @@ body {
   color: var(--color-ink);
   font-family: var(--font-sans);
   -webkit-font-smoothing: antialiased;
+  transition:
+    background-color 0.25s ease,
+    color 0.25s ease;
 }
 
 .nav-gradient {
@@ -97,4 +137,73 @@ input[type="number"]::-webkit-inner-spin-button {
   appearance: none;
   -webkit-appearance: none;
   margin: 0;
+}
+
+/* ---------- Motion ---------- */
+
+@keyframes fade-in-up {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+
+@keyframes fade-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes slide-in-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@keyframes pulse-ring {
+  0% {
+    box-shadow: 0 0 0 0 rgba(209, 69, 69, 0.55);
+  }
+  70% {
+    box-shadow: 0 0 0 7px rgba(209, 69, 69, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(209, 69, 69, 0);
+  }
+}
+
+/* Every page's content fades/slides in on mount — replays naturally on each route change. */
+.animate-page-in {
+  animation: fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.animate-fade-in {
+  animation: fade-in 0.25s ease-out both;
+}
+
+.animate-slide-in-right {
+  animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
+.notif-pulse {
+  animation: pulse-ring 1.8s ease-out infinite;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-page-in,
+  .animate-fade-in,
+  .animate-slide-in-right,
+  .notif-pulse {
+    animation: none;
+  }
 }
