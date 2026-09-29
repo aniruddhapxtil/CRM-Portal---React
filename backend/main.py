@@ -19,7 +19,9 @@ from pathlib import Path
 import boto3
 import httpx
 from botocore.config import Config as BotoConfig
-from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
+from auth_service import get_current_user, get_current_user_page
+from auth_service import setup as setup_auth
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
@@ -1576,6 +1578,13 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
+# Microsoft SSO (see auth_service/). Adds /login, /auth/* and the `users` table.
+# Must run BEFORE the routes below so the catch-all page route at the bottom never shadows /login.
+setup_auth(app)
+
+# Every /api/* route carries this, so nothing under /api is reachable without a valid session.
+REQUIRE_LOGIN = [Depends(get_current_user)]
+
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
 
@@ -1716,7 +1725,7 @@ def health():
 # Accounts Overview / Registry Query Endpoint
 # =====================================================================
 
-@app.get("/api/accounts/overview")
+@app.get("/api/accounts/overview", dependencies=REQUIRE_LOGIN)
 def get_accounts_overview(db: Session = Depends(get_db)):
     accounts = db.scalars(
         select(Account)
@@ -1762,7 +1771,7 @@ def get_accounts_overview(db: Session = Depends(get_db)):
 # Cross-Entity Lookup Endpoint (feeds all dropdowns + FK cross-refs)
 # =====================================================================
 
-@app.get("/api/lookups")
+@app.get("/api/lookups", dependencies=REQUIRE_LOGIN)
 def get_lookups(db: Session = Depends(get_db)):
     accounts = db.scalars(select(Account).order_by(Account.account_name)).all()
     subsidiaries = db.scalars(select(Subsidiary).order_by(Subsidiary.subsidiary_name)).all()
@@ -1828,7 +1837,7 @@ def get_lookups(db: Session = Depends(get_db)):
 # Registry Overview Endpoints (feed the hierarchical registry tables)
 # =====================================================================
 
-@app.get("/api/subsidiaries/overview")
+@app.get("/api/subsidiaries/overview", dependencies=REQUIRE_LOGIN)
 def get_subsidiaries_overview(db: Session = Depends(get_db)):
     subs = db.scalars(
         select(Subsidiary)
@@ -1860,7 +1869,7 @@ def get_subsidiaries_overview(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/api/contacts/overview")
+@app.get("/api/contacts/overview", dependencies=REQUIRE_LOGIN)
 def get_contacts_overview(db: Session = Depends(get_db)):
     contacts = db.scalars(
         select(Contact)
@@ -1901,7 +1910,7 @@ def get_contacts_overview(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/api/leads/overview")
+@app.get("/api/leads/overview", dependencies=REQUIRE_LOGIN)
 def get_leads_overview(db: Session = Depends(get_db)):
     leads = db.scalars(
         select(Lead)
@@ -1953,7 +1962,7 @@ def get_leads_overview(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/api/opportunities/overview")
+@app.get("/api/opportunities/overview", dependencies=REQUIRE_LOGIN)
 def get_opportunities_overview(db: Session = Depends(get_db)):
     opps = db.scalars(
         select(Opportunity)
@@ -2003,7 +2012,7 @@ def get_opportunities_overview(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/api/projects/overview")
+@app.get("/api/projects/overview", dependencies=REQUIRE_LOGIN)
 def get_projects_overview(db: Session = Depends(get_db)):
     projects = db.scalars(
         select(Project)
@@ -2035,7 +2044,7 @@ def get_projects_overview(db: Session = Depends(get_db)):
     ]
 
 
-@app.get("/api/activities/overview")
+@app.get("/api/activities/overview", dependencies=REQUIRE_LOGIN)
 def get_activities_overview(db: Session = Depends(get_db)):
     activities = db.scalars(select(Activity).order_by(Activity.id.desc()).limit(200)).all()
 
@@ -2100,7 +2109,7 @@ def get_activities_overview(db: Session = Depends(get_db)):
 # Single-Record Detail Endpoints (feed the Edit forms with full field data)
 # =====================================================================
 
-@app.get("/api/account/{account_id}")
+@app.get("/api/account/{account_id}", dependencies=REQUIRE_LOGIN)
 def get_account_detail(account_id: int, db: Session = Depends(get_db)):
     acc = db.scalar(select(Account).where(Account.id == account_id))
     if not acc:
@@ -2112,7 +2121,7 @@ def get_account_detail(account_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/subsidiary/{subsidiary_id}")
+@app.get("/api/subsidiary/{subsidiary_id}", dependencies=REQUIRE_LOGIN)
 def get_subsidiary_detail(subsidiary_id: int, db: Session = Depends(get_db)):
     sub = db.scalar(select(Subsidiary).where(Subsidiary.id == subsidiary_id))
     if not sub:
@@ -2124,7 +2133,7 @@ def get_subsidiary_detail(subsidiary_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/contact/{contact_id}")
+@app.get("/api/contact/{contact_id}", dependencies=REQUIRE_LOGIN)
 def get_contact_detail(contact_id: int, db: Session = Depends(get_db)):
     con = db.scalar(select(Contact).where(Contact.id == contact_id))
     if not con:
@@ -2139,7 +2148,7 @@ def get_contact_detail(contact_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/lead/{lead_id}")
+@app.get("/api/lead/{lead_id}", dependencies=REQUIRE_LOGIN)
 def get_lead_detail(lead_id: int, db: Session = Depends(get_db)):
     lead = db.scalar(select(Lead).where(Lead.id == lead_id))
     if not lead:
@@ -2159,7 +2168,7 @@ def get_lead_detail(lead_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/opportunity/{opportunity_id}")
+@app.get("/api/opportunity/{opportunity_id}", dependencies=REQUIRE_LOGIN)
 def get_opportunity_detail(opportunity_id: int, db: Session = Depends(get_db)):
     opp = db.scalar(select(Opportunity).where(Opportunity.id == opportunity_id))
     if not opp:
@@ -2180,7 +2189,7 @@ def get_opportunity_detail(opportunity_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/project/{project_id}")
+@app.get("/api/project/{project_id}", dependencies=REQUIRE_LOGIN)
 def get_project_detail(project_id: int, db: Session = Depends(get_db)):
     proj = db.scalar(select(Project).where(Project.id == project_id))
     if not proj:
@@ -2199,7 +2208,7 @@ def get_project_detail(project_id: int, db: Session = Depends(get_db)):
     }
 
 
-@app.get("/api/activity/{activity_id}")
+@app.get("/api/activity/{activity_id}", dependencies=REQUIRE_LOGIN)
 def get_activity_detail(activity_id: int, db: Session = Depends(get_db)):
     act = db.scalar(select(Activity).where(Activity.id == activity_id))
     if not act:
@@ -2222,7 +2231,7 @@ def get_activity_detail(activity_id: int, db: Session = Depends(get_db)):
 # Manual Form Save Endpoints (Direct POST from HTML Pages)
 # =====================================================================
 
-@app.post("/api/account/save")
+@app.post("/api/account/save", dependencies=REQUIRE_LOGIN)
 def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
     account = None
     if data.account_id:
@@ -2245,7 +2254,7 @@ def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
     return {"status": "success", "account_id": account.id}
 
 
-@app.post("/api/subsidiary/save")
+@app.post("/api/subsidiary/save", dependencies=REQUIRE_LOGIN)
 def save_subsidiary_form(data: SubsidiaryFormIn, db: Session = Depends(get_db)):
     sub = None
     if data.subsidiary_id:
@@ -2267,7 +2276,7 @@ def save_subsidiary_form(data: SubsidiaryFormIn, db: Session = Depends(get_db)):
     return {"status": "success", "subsidiary_id": sub.id}
 
 
-@app.post("/api/contact/save")
+@app.post("/api/contact/save", dependencies=REQUIRE_LOGIN)
 def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
     contact = None
     if data.contact_id:
@@ -2297,7 +2306,7 @@ def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
     return {"status": "success", "contact_id": contact.id}
 
 
-@app.post("/api/lead/save")
+@app.post("/api/lead/save", dependencies=REQUIRE_LOGIN)
 def save_lead_form(data: LeadFormIn, db: Session = Depends(get_db)):
     lead = None
     if data.lead_id:
@@ -2333,7 +2342,7 @@ def save_lead_form(data: LeadFormIn, db: Session = Depends(get_db)):
     return {"status": "success", "lead_id": lead.id}
 
 
-@app.post("/api/opportunity/save")
+@app.post("/api/opportunity/save", dependencies=REQUIRE_LOGIN)
 def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)):
     opp = None
     if data.opportunity_id:
@@ -2414,7 +2423,7 @@ def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)
     return {"status": "success", "opportunity_id": opp.id, "project_id": project_id}
 
 
-@app.post("/api/project/save")
+@app.post("/api/project/save", dependencies=REQUIRE_LOGIN)
 def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
     proj = None
     if data.project_id:
@@ -2457,7 +2466,7 @@ def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
     return {"status": "success", "project_id": proj.id}
 
 
-@app.post("/api/activity/save")
+@app.post("/api/activity/save", dependencies=REQUIRE_LOGIN)
 def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
     act = None
     if data.activity_id:
@@ -2511,7 +2520,7 @@ def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
 # Telemetry Retrieval Endpoint
 # =====================================================================
 
-@app.get("/api/voice/telemetry")
+@app.get("/api/voice/telemetry", dependencies=REQUIRE_LOGIN)
 def get_telemetry(date_str: str | None = Query(None, alias="date")):
     target_date = date_str or datetime.now().strftime("%Y-%m-%d")
     log_file = LOGS_DIR / f"crm_telemetry_{target_date}.json"
@@ -2548,7 +2557,7 @@ def get_telemetry(date_str: str | None = Query(None, alias="date")):
     }
 
 
-@app.get("/api/voice/drafts")
+@app.get("/api/voice/drafts", dependencies=REQUIRE_LOGIN)
 def get_voice_drafts(db: Session = Depends(get_db)):
     drafts = db.scalars(
         select(VoiceDraft).order_by(VoiceDraft.id.desc()).limit(30)
@@ -2585,7 +2594,7 @@ def get_voice_drafts(db: Session = Depends(get_db)):
 # Voice Ingestion Endpoint (AWS Transcribe + Bedrock Sonnet 5)
 # =====================================================================
 
-@app.post("/api/voice/process")
+@app.post("/api/voice/process", dependencies=REQUIRE_LOGIN)
 async def process_voice(
     audio: UploadFile = File(...),
     user_id: int | None = Form(None),
@@ -2712,7 +2721,7 @@ async def process_voice(
             os.remove(path)
 
 
-@app.post("/api/voice/draft/{draft_id}/resume")
+@app.post("/api/voice/draft/{draft_id}/resume", dependencies=REQUIRE_LOGIN)
 async def resume_voice_draft(
     draft_id: int,
     additional_audio: UploadFile | None = File(None),
@@ -2813,7 +2822,7 @@ async def resume_voice_draft(
     }
 
 
-@app.post("/api/voice/commit")
+@app.post("/api/voice/commit", dependencies=REQUIRE_LOGIN)
 async def commit_voice_records(payload: ConfirmedCommitPayload, db: Session = Depends(get_db)):
     started = time.perf_counter()
 
@@ -2869,19 +2878,23 @@ async def commit_voice_records(payload: ConfirmedCommitPayload, db: Session = De
 # =====================================================================
 
 @app.get("/{full_path:path}")
-def serve_spa(full_path: str):
+def serve_spa(full_path: str, request: Request):
     # An unmatched /api/* path is a real 404, not a client route — never mask it with the SPA shell.
     if full_path.startswith("api/"):
         raise HTTPException(404, "Not found.")
 
-    index_file = FRONTEND_DIST_DIR / "index.html"
-    if not index_file.exists():
-        raise HTTPException(404, "Frontend build not found. Run `npm run build` in frontend/.")
-
     # Serve a real dist-root file (favicon.svg, icons.svg, ...) directly when the
-    # request matches one; otherwise fall back to index.html for client-side routing.
+    # request matches one. These are public, non-sensitive static files.
     candidate = (FRONTEND_DIST_DIR / full_path).resolve()
     if full_path and candidate.is_file() and FRONTEND_DIST_DIR.resolve() in candidate.parents:
         return FileResponse(str(candidate))
+
+    # Every real page of the CRM (index.html and all client-side routes) needs a signed-in user;
+    # signed-out visitors are sent to /login.
+    get_current_user_page(request)
+
+    index_file = FRONTEND_DIST_DIR / "index.html"
+    if not index_file.exists():
+        raise HTTPException(404, "Frontend build not found. Run `npm run build` in frontend/.")
 
     return FileResponse(str(index_file))

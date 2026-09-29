@@ -14,6 +14,16 @@ export default defineConfig({
         target: 'http://localhost:8000',
         changeOrigin: true,
       },
+      // Microsoft SSO: the login page and its endpoints are served by FastAPI too.
+      // Proxying them keeps login on the same address (localhost:5173) as the app, so the session cookie just works.
+      '/auth': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
+      '/login': {
+        target: 'http://localhost:8000',
+        changeOrigin: true,
+      },
     },
   },
 })

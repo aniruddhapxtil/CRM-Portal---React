@@ -10,11 +10,21 @@ export class ApiError extends Error {
   }
 }
 
+/** Sends the browser to the SSO login page (served by FastAPI at /login). */
+export function redirectToLogin(): void {
+  window.location.assign("/login");
+}
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${BASE_URL}${path}`, {
     headers: init?.body ? { "Content-Type": "application/json" } : undefined,
     ...init,
   });
+  // Signed out or session expired: the backend checks this on every call; the page just follows along.
+  if (res.status === 401) {
+    redirectToLogin();
+    throw new ApiError(401, "Your session has ended. Redirecting to sign-in…");
+  }
   if (!res.ok) {
     const body = await res.json().catch(() => null);
     throw new ApiError(res.status, body?.detail ?? res.statusText);

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { NavLink, useNavigate } from "react-router-dom";
+import { signOut } from "../../api/auth";
+import { useAuth } from "../../context/AuthContext";
 import { useNotifications } from "../../context/NotificationContext";
 import { useTheme } from "../../context/ThemeContext";
 
@@ -161,6 +163,23 @@ function ThemeToggle() {
   );
 }
 
+function UserBadge() {
+  const user = useAuth();
+  return (
+    <div className="flex min-w-0 flex-col text-left leading-tight lg:text-right">
+      <span className="truncate text-sm font-semibold text-white">{user.name}</span>
+      <span className="flex items-center gap-1.5 text-[11px] text-white/70 lg:justify-end">
+        {user.role}
+        {user.mode === "demo" && (
+          <span className="rounded-full bg-black/25 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-white">
+            Demo login
+          </span>
+        )}
+      </span>
+    </div>
+  );
+}
+
 export function TopNav() {
   const [drawerOpen, setDrawerOpen] = useState(false);
 
@@ -178,6 +197,18 @@ export function TopNav() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1">
+          <div className="mr-2 hidden items-center gap-2 lg:flex">
+            <div className="hidden xl:block">
+              <UserBadge />
+            </div>
+            <button
+              type="button"
+              className="tap-target rounded-md px-3 text-sm font-semibold text-white/70 transition-colors duration-200 hover:bg-[var(--nav-active-bg)] hover:text-white"
+              onClick={signOut}
+            >
+              Sign out
+            </button>
+          </div>
           <ThemeToggle />
           <NotificationBell />
           <button
@@ -208,6 +239,18 @@ export function TopNav() {
             {NAV_LINKS.map((l) => (
               <NavLinkItem key={l.to} {...l} onClick={() => setDrawerOpen(false)} />
             ))}
+            <div className="mt-auto flex flex-col gap-2 border-t border-white/20 pt-3">
+              <div className="px-3">
+                <UserBadge />
+              </div>
+              <button
+                type="button"
+                className="tap-target flex items-center rounded-md px-3 text-sm font-semibold text-white/70 transition-colors duration-200 hover:bg-[var(--nav-active-bg)] hover:text-white"
+                onClick={signOut}
+              >
+                Sign out
+              </button>
+            </div>
           </div>
         </div>
       )}

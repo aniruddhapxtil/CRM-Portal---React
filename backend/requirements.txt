@@ -8,3 +8,9 @@ pydantic-settings
 boto3
 httpx
 imageio-ffmpeg
+
+# --- Microsoft SSO (auth_service/) ---
+msal
+itsdangerous
+pyjwt[crypto]
+cryptography
