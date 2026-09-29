@@ -82,5 +82,86 @@
         "backend_total_ms": 41023
       }
     }
+  },
+  {
+    "timestamp": "2026-09-29T13:10:58.094043",
+    "draft_id": 14,
+    "intent": "create_opportunity",
+    "transcript": "Create a new opportunity for Altair Group. The account manager is Sarah Khan, region Dubai, industry retail. The contact is Michael Chen. Chief Technology Officer, email michael.chen@altair.com. This opportunity is about a large-scale data platform optimization project, moving their entire analytics stack to Azure data bricks with Power BI on top. The deal size approximately 1.2 million dirhams fixed cost project type, funded partly by Microsoft. The next step is to schedule a technical architecture workshop with their engineering team next week. This is a hot lead and we expect to close within the next 2 months. Please also note that our tier group has multiple subsidies including a retail division and a logistics division. And this opportunity is specifically for the retail division. The primary technology stack under discussion includes Azure, Data Bricks, and Power BI, and the client has expressed strong interest in moving forward quickly given their current infrastructure is end of life.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2079,
+        "output_tokens": 757,
+        "total_tokens": 2836
+      },
+      "costs": {
+        "stt_cost_inr": 0.569378,
+        "llm_cost_usd": 0.011728,
+        "details": {
+          "audio_duration_sec": 68.33,
+          "billable_seconds": 68.33
+        }
+      },
+      "latency": {
+        "transcribe_ms": 7184,
+        "llm_ms": 8390,
+        "backend_total_ms": 15669
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-29T13:11:20.626196",
+    "draft_id": 15,
+    "intent": "create_lead",
+    "transcript": "Create a new lead for Green Valley Farms contact Aisha Khan, procurement manager.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1802,
+        "output_tokens": 216,
+        "total_tokens": 2018
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.005764,
+        "details": {
+          "audio_duration_sec": 4.95,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 929,
+        "llm_ms": 3321,
+        "backend_total_ms": 4308
+      }
+    }
+  },
+  {
+    "timestamp": "2026-09-29T13:17:26.470841",
+    "draft_id": 16,
+    "intent": "create_opportunity",
+    "transcript": "Create an opportunity for Dubai Integrated Economic Zone for 450,000 dirham on Azure data bricks and Power BI with Tariq Mansoor who is the VP of Smart Cities. The scope is an IoT telemetry lake house and analytical platform under Time and Materials project type. The account manager for this account is Ramanj Falasi operating in Dubai region under an FNB industry. Next step is to present the architecture deck next Thursday.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1920,
+        "output_tokens": 882,
+        "total_tokens": 2802
+      },
+      "costs": {
+        "stt_cost_inr": 0.2255,
+        "llm_cost_usd": 0.01266,
+        "details": {
+          "audio_duration_sec": 27.06,
+          "billable_seconds": 27.06
+        }
+      },
+      "latency": {
+        "transcribe_ms": 2685,
+        "llm_ms": 8799,
+        "backend_total_ms": 11592
+      }
+    }
   }
 ]

@@ -16,7 +16,9 @@ from email.mime.text import MIMEText
 from functools import lru_cache
 from pathlib import Path
 
+import boto3
 import httpx
+from botocore.config import Config as BotoConfig
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -55,8 +57,9 @@ class Settings(BaseSettings):
     database_url: str = "postgresql+psycopg://voicecrm:voicecrm@localhost:5432/voicecrm"
     sarvam_api_key: str = ""
     sarvam_stt_model: str = "saaras:v3"
-    sarvam_chat_model: str = "sarvam-105b"
-    max_audio_mb: int = 25
+    aws_region: str = "us-east-2"
+    bedrock_model_id: str = "us.anthropic.claude-sonnet-5"
+    max_audio_mb: int = 50
     cors_origins: str = "http://localhost:5173,http://localhost:8000,http://127.0.0.1:8000"
 
     smtp_host: str = "smtp.gmail.com"
@@ -1024,7 +1027,15 @@ def parse_json(text: str):
 # =====================================================================
 
 SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text"
-SARVAM_CHAT_URL = "https://api.sarvam.ai/v1/chat/completions"
+SARVAM_STT_JOB_URL = "https://api.sarvam.ai/speech-to-text/job/v1"
+
+# Sarvam's synchronous /speech-to-text endpoint hard-caps at 30s of audio ("Audio duration
+# exceeds the maximum limit of 30 seconds. Please use the batch API for longer audio files."
+# is the literal error). Stay under that with a safety margin rather than eating a doomed
+# call; anything longer transparently goes through the async batch-job flow instead.
+SARVAM_SHORT_CLIP_MAX_SECONDS = 28.0
+SARVAM_BATCH_POLL_INTERVAL_SECONDS = 3.0
+SARVAM_BATCH_POLL_MAX_ATTEMPTS = 60  # ~3 minutes — batch jobs for 1-2 minute clips finish in seconds in practice
 
 
 def _decode_utf8_json(response: httpx.Response):
@@ -1036,17 +1047,23 @@ def _decode_utf8_json(response: httpx.Response):
 
 
 class SarvamSTTService:
-    """Batch REST transcription via Sarvam's Saaras models. We record a full clip
-    client-side and POST it once processing finishes, so the batch endpoint (not
-    Sarvam's WebSocket streaming endpoint) is the right fit — same shape as the
-    AWS Transcribe call this replaces."""
+    """Transcription via Sarvam's Saaras models. Short clips go through the simple
+    synchronous REST endpoint; clips over Sarvam's 30-second cap on that endpoint are
+    transparently routed through their async batch-job flow (initiate -> upload ->
+    start -> poll -> download), reverse-engineered against the live API since Sarvam's
+    own docs don't spell out the exact request/response shapes for it."""
 
     def __init__(self, api_key: str, model: str):
         self.api_key = api_key
         self.model = model
 
-    async def transcribe(self, wav_bytes: bytes) -> str:
-        async with httpx.AsyncClient(timeout=60.0) as client:
+    async def transcribe(self, wav_bytes: bytes, duration_sec: float) -> str:
+        if duration_sec <= SARVAM_SHORT_CLIP_MAX_SECONDS:
+            return await self._transcribe_short(wav_bytes)
+        return await self._transcribe_batch(wav_bytes)
+
+    async def _transcribe_short(self, wav_bytes: bytes) -> str:
+        async with httpx.AsyncClient(timeout=120.0) as client:
             response = await client.post(
                 SARVAM_STT_URL,
                 headers={"api-subscription-key": self.api_key},
@@ -1061,57 +1078,147 @@ class SarvamSTTService:
             raise ValueError("Sarvam STT completed, but detected no speech in the recording.")
         return transcript
 
-
-# =====================================================================
-# Sarvam AI Chat Completions Implementation (Sarvam-105B)
-# =====================================================================
-
-class SarvamChatService:
-    """Structured-extraction LLM call via Sarvam's OpenAI-compatible chat
-    completions endpoint (JSON mode), replacing the AWS Bedrock/Claude call."""
-
-    def __init__(self, api_key: str, model: str):
-        self.api_key = api_key
-        self.model = model
-
-    async def extract(self, transcript: str):
+    async def _transcribe_batch(self, wav_bytes: bytes) -> str:
+        headers = {"api-subscription-key": self.api_key, "Content-Type": "application/json"}
         async with httpx.AsyncClient(timeout=60.0) as client:
-            response = await client.post(
-                SARVAM_CHAT_URL,
-                headers={
-                    "Authorization": f"Bearer {self.api_key}",
-                    "api-subscription-key": self.api_key,
-                    "Content-Type": "application/json",
-                },
+            resp = await client.post(
+                SARVAM_STT_JOB_URL,
+                headers=headers,
                 json={
-                    "model": self.model,
-                    "messages": [
-                        {"role": "system", "content": SYSTEM_PROMPT},
-                        {
-                            "role": "user",
-                            "content": f"Reference date: {date.today().isoformat()}\nTranscript: {transcript}\nOutput JSON strictly according to instructions:",
-                        },
-                    ],
-                    "temperature": 0.2,
-                    "max_tokens": 8192,  # sarvam-105b spends part of the budget on reasoning_content before the final JSON
-                    "reasoning_effort": "low",
-                    "response_format": {"type": "json_object"},
+                    "job_parameters": {
+                        "language_code": "unknown",
+                        "model": self.model,
+                        "mode": "transcribe",
+                        "with_timestamps": False,
+                    }
                 },
             )
-        if response.status_code >= 400:
-            raise ValueError(f"Sarvam chat completion request failed ({response.status_code}): {response.content.decode('utf-8', errors='replace')}")
+            if resp.status_code >= 400:
+                raise ValueError(f"Sarvam STT batch job initiation failed ({resp.status_code}): {resp.content.decode('utf-8', errors='replace')}")
+            job_id = _decode_utf8_json(resp)["job_id"]
 
-        data = _decode_utf8_json(response)
-        choice = (data.get("choices") or [{}])[0]
-        raw_text = (choice.get("message") or {}).get("content") or ""
+            resp = await client.post(
+                f"{SARVAM_STT_JOB_URL}/upload-files",
+                headers=headers,
+                json={"job_id": job_id, "files": ["audio.wav"]},
+            )
+            if resp.status_code >= 400:
+                raise ValueError(f"Sarvam STT batch upload-URL request failed ({resp.status_code}): {resp.content.decode('utf-8', errors='replace')}")
+            upload_url = _decode_utf8_json(resp)["upload_urls"]["audio.wav"]["file_url"]
+
+            # The presigned URL is Azure Blob Storage, not the Sarvam API itself — no auth header, just the blob-type header.
+            resp = await client.put(
+                upload_url,
+                headers={"x-ms-blob-type": "BlockBlob", "Content-Type": "audio/wav"},
+                content=wav_bytes,
+            )
+            if resp.status_code >= 300:
+                raise ValueError(f"Sarvam STT batch audio upload failed ({resp.status_code}).")
+
+            resp = await client.post(f"{SARVAM_STT_JOB_URL}/{job_id}/start", headers=headers)
+            if resp.status_code >= 400:
+                raise ValueError(f"Sarvam STT batch job start failed ({resp.status_code}): {resp.content.decode('utf-8', errors='replace')}")
+
+            status_data = None
+            for _ in range(SARVAM_BATCH_POLL_MAX_ATTEMPTS):
+                await asyncio.sleep(SARVAM_BATCH_POLL_INTERVAL_SECONDS)
+                resp = await client.get(f"{SARVAM_STT_JOB_URL}/{job_id}/status", headers=headers)
+                if resp.status_code >= 400:
+                    raise ValueError(f"Sarvam STT batch status check failed ({resp.status_code}): {resp.content.decode('utf-8', errors='replace')}")
+                status_data = _decode_utf8_json(resp)
+                state = status_data.get("job_state")
+                if state == "Completed":
+                    break
+                if state == "Failed":
+                    raise ValueError(f"Sarvam STT batch job failed: {status_data.get('error_message') or 'unknown error'}")
+            else:
+                raise ValueError("Sarvam STT batch job timed out waiting for completion.")
+
+            output_files = [
+                o["file_name"] for d in status_data.get("job_details", []) for o in d.get("outputs", [])
+            ]
+            if not output_files:
+                raise ValueError("Sarvam STT batch job completed but produced no output file.")
+
+            resp = await client.post(
+                f"{SARVAM_STT_JOB_URL}/download-files",
+                headers=headers,
+                json={"job_id": job_id, "files": output_files},
+            )
+            if resp.status_code >= 400:
+                raise ValueError(f"Sarvam STT batch download-URL request failed ({resp.status_code}): {resp.content.decode('utf-8', errors='replace')}")
+            download_url = _decode_utf8_json(resp)["download_urls"][output_files[0]]["file_url"]
+
+            resp = await client.get(download_url)
+            if resp.status_code >= 400:
+                raise ValueError(f"Sarvam STT batch transcript download failed ({resp.status_code}).")
+            transcript = (_decode_utf8_json(resp).get("transcript") or "").strip()
+
+        if not transcript:
+            raise ValueError("Sarvam STT batch job completed, but detected no speech in the recording.")
+        return transcript
+
+
+# =====================================================================
+# AWS Bedrock Claude Sonnet 5 Implementation
+# =====================================================================
+
+class AWSBedrockService:
+    """Structured-extraction LLM call via AWS Bedrock's Converse API — swapped back in
+    for Sarvam-105B, whose reasoning-model overhead (~15s/call) was too slow for this
+    step. Sarvam stays on STT only, which doesn't have that latency problem. Relies on
+    the default boto3 credential chain (same as before Sarvam was introduced)."""
+
+    def __init__(self, region: str, model_id: str):
+        self.region = region
+        self.model_id = model_id
+        self.client = boto3.client(
+            "bedrock-runtime",
+            region_name=region,
+            config=BotoConfig(read_timeout=120, connect_timeout=10),
+        )
+
+    async def extract(self, transcript: str):
+        # boto3 has no native async client — run the blocking call off the event loop thread.
+        return await asyncio.to_thread(self._extract_sync, transcript)
+
+    def _extract_sync(self, transcript: str):
+        response = self.client.converse(
+            modelId=self.model_id,
+            messages=[
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "text": f"Reference date: {date.today().isoformat()}\nTranscript: {transcript}\nOutput JSON strictly according to instructions:"
+                        }
+                    ],
+                }
+            ],
+            system=[{"text": SYSTEM_PROMPT}],
+            inferenceConfig={"maxTokens": 4096},
+        )
+
+        # Safely extract text across all content blocks (handles reasoningContent blocks)
+        content_blocks = response.get("output", {}).get("message", {}).get("content", [])
+        raw_text = ""
+        for block in content_blocks:
+            if isinstance(block, dict) and "text" in block:
+                raw_text += block["text"]
+
+        # Fallback: if no direct text block was returned, check reasoningContent
+        if not raw_text:
+            for block in content_blocks:
+                if isinstance(block, dict) and "reasoningContent" in block:
+                    raw_text += block.get("reasoningContent", {}).get("reasoningText", {}).get("text", "")
 
         if not raw_text:
-            finish_reason = choice.get("finish_reason", "unknown")
-            raise ValueError(f"Sarvam chat completion returned no text content (finish_reason: {finish_reason}).")
+            stop_reason = response.get("stopReason", "unknown")
+            raise ValueError(f"Bedrock returned no text content (stopReason: {stop_reason}).")
 
-        usage = data.get("usage", {})
-        input_tokens = usage.get("prompt_tokens", 0)
-        output_tokens = usage.get("completion_tokens", 0)
+        usage = response.get("usage", {})
+        input_tokens = usage.get("inputTokens", 0)
+        output_tokens = usage.get("outputTokens", 0)
 
         parsed_data = parse_json(raw_text)
         payload = FullLifecycleVoicePayload.model_validate(parsed_data)
@@ -1591,16 +1698,16 @@ def startup():
     run_schema_migrations()
     global _stt_service, _chat_service
     _stt_service = SarvamSTTService(api_key=settings().sarvam_api_key, model=settings().sarvam_stt_model)
-    _chat_service = SarvamChatService(api_key=settings().sarvam_api_key, model=settings().sarvam_chat_model)
+    _chat_service = AWSBedrockService(region=settings().aws_region, model_id=settings().bedrock_model_id)
 
 
 @app.get("/health")
 def health():
     return {
         "status": "ok",
-        "provider": "Sarvam AI",
+        "provider": "Sarvam STT + AWS Bedrock",
         "stt_model": settings().sarvam_stt_model,
-        "chat_model": settings().sarvam_chat_model,
+        "bedrock_model": settings().bedrock_model_id,
         "timestamp": datetime.now().isoformat(),
     }
 
@@ -2413,7 +2520,8 @@ def get_telemetry(date_str: str | None = Query(None, alias="date")):
         return {
             "date": target_date,
             "total_calls": 0,
-            "total_cost_usd": 0.0,
+            "total_stt_cost_inr": 0.0,
+            "total_llm_cost_usd": 0.0,
             "total_tokens": 0,
             "sessions": [],
         }
@@ -2426,13 +2534,15 @@ def get_telemetry(date_str: str | None = Query(None, alias="date")):
     except Exception:
         sessions = []
 
-    total_cost = sum(s.get("telemetry", {}).get("costs_usd", {}).get("total_cost", 0.0) for s in sessions)
+    total_stt_cost = sum(s.get("telemetry", {}).get("costs", {}).get("stt_cost_inr", 0.0) for s in sessions)
+    total_llm_cost = sum(s.get("telemetry", {}).get("costs", {}).get("llm_cost_usd", 0.0) for s in sessions)
     total_tokens = sum(s.get("telemetry", {}).get("tokens", {}).get("total_tokens", 0) for s in sessions)
 
     return {
         "date": target_date,
         "total_calls": len(sessions),
-        "total_cost_usd": round(total_cost, 6),
+        "total_stt_cost_inr": round(total_stt_cost, 6),
+        "total_llm_cost_usd": round(total_llm_cost, 6),
         "total_tokens": total_tokens,
         "sessions": sessions[-25:],
     }
@@ -2503,7 +2613,7 @@ async def process_voice(
         wav_bytes, duration_sec = convert_to_wav_16k(path)
 
         start_transcribe = time.perf_counter()
-        transcript = await _stt_service.transcribe(wav_bytes)
+        transcript = await _stt_service.transcribe(wav_bytes, duration_sec)
         transcribe_ms = int((time.perf_counter() - start_transcribe) * 1000)
 
         start_llm = time.perf_counter()
@@ -2516,13 +2626,14 @@ async def process_voice(
 
         # Sarvam Saaras STT: ₹30/hour, 15-second minimum billing increment
         billable_seconds = max(15.0, duration_sec)
-        stt_cost = (billable_seconds / 3600.0) * 30.0
+        stt_cost_inr = (billable_seconds / 3600.0) * 30.0
 
-        # Sarvam-105B chat completions: ₹29.28/1M input tokens, ₹73.20/1M output tokens
-        llm_input_cost = (input_tokens / 1_000_000.0) * 29.28
-        llm_output_cost = (output_tokens / 1_000_000.0) * 73.20
-        llm_cost = llm_input_cost + llm_output_cost
-        total_cost = stt_cost + llm_cost
+        # AWS Bedrock Claude Sonnet 5: $2.00/1M input tokens, $10.00/1M output tokens
+        llm_input_cost = (input_tokens / 1_000_000.0) * 2.0
+        llm_output_cost = (output_tokens / 1_000_000.0) * 10.0
+        llm_cost_usd = llm_input_cost + llm_output_cost
+        # STT (INR) and LLM (USD) are billed in different currencies — reported separately below,
+        # not summed into a single misleading "total_cost".
 
         extracted_dict = payload.model_dump(mode="json")
         for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
@@ -2558,10 +2669,9 @@ async def process_voice(
                 "output_tokens": output_tokens,
                 "total_tokens": input_tokens + output_tokens,
             },
-            "costs_inr": {
-                "stt_cost": round(stt_cost, 6),
-                "llm_cost": round(llm_cost, 6),
-                "total_cost": round(total_cost, 6),
+            "costs": {
+                "stt_cost_inr": round(stt_cost_inr, 6),
+                "llm_cost_usd": round(llm_cost_usd, 6),
                 "details": {
                     "audio_duration_sec": round(duration_sec, 2),
                     "billable_seconds": round(billable_seconds, 2),
@@ -2628,7 +2738,7 @@ async def resume_voice_draft(
                 f.write(await additional_audio.read())
             wav_bytes, duration_sec = convert_to_wav_16k(path)
             t_t0 = time.perf_counter()
-            supplementary_text = await _stt_service.transcribe(wav_bytes)
+            supplementary_text = await _stt_service.transcribe(wav_bytes, duration_sec)
             transcribe_ms = int((time.perf_counter() - t_t0) * 1000)
         finally:
             if os.path.exists(path):
@@ -2648,10 +2758,10 @@ async def resume_voice_draft(
     total_backend_ms = int((time.perf_counter() - started) * 1000)
 
     billable_seconds = max(15.0, duration_sec) if duration_sec > 0 else 0.0
-    stt_cost = (billable_seconds / 3600.0) * 30.0 if billable_seconds > 0 else 0.0
+    stt_cost_inr = (billable_seconds / 3600.0) * 30.0 if billable_seconds > 0 else 0.0
 
-    llm_cost = ((input_tokens / 1_000_000.0) * 29.28) + ((output_tokens / 1_000_000.0) * 73.20)
-    total_cost = stt_cost + llm_cost
+    # AWS Bedrock Claude Sonnet 5: $2.00/1M input tokens, $10.00/1M output tokens
+    llm_cost_usd = ((input_tokens / 1_000_000.0) * 2.0) + ((output_tokens / 1_000_000.0) * 10.0)
 
     extracted_dict = updated_payload.model_dump(mode="json")
     for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
@@ -2671,10 +2781,9 @@ async def resume_voice_draft(
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         },
-        "costs_inr": {
-            "stt_cost": round(stt_cost, 6),
-            "llm_cost": round(llm_cost, 6),
-            "total_cost": round(total_cost, 6),
+        "costs": {
+            "stt_cost_inr": round(stt_cost_inr, 6),
+            "llm_cost_usd": round(llm_cost_usd, 6),
         },
         "latency": {
             "transcribe_ms": transcribe_ms,

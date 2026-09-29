@@ -74,7 +74,7 @@ export interface VoiceProcessResponse {
   extracted_data: VoiceExtractedData;
   missing_fields: string[];
   clarification_prompt: string | null;
-  telemetry?: { latency?: VoiceLatency; costs_inr?: Record<string, number>; tokens?: Record<string, number> };
+  telemetry?: { latency?: VoiceLatency; costs?: Record<string, number>; tokens?: Record<string, number> };
 }
 
 export interface VoiceDraftRow {
