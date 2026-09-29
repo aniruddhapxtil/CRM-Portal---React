@@ -197,18 +197,22 @@ export function TopNav() {
         </nav>
 
         <div className="ml-auto flex items-center gap-1">
-          <div className="mr-2 hidden items-center gap-2 lg:flex">
-            <div className="hidden xl:block">
-              <UserBadge />
-            </div>
-            <button
-              type="button"
-              className="tap-target rounded-md px-3 text-sm font-semibold text-white/70 transition-colors duration-200 hover:bg-[var(--nav-active-bg)] hover:text-white"
-              onClick={signOut}
-            >
-              Sign out
-            </button>
+          <div className="mr-1 hidden lg:block">
+            <UserBadge />
           </div>
+          <button
+            type="button"
+            className="tap-target flex items-center gap-1.5 rounded-md px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white lg:px-3"
+            onClick={signOut}
+            aria-label="Sign out"
+            title="Sign out"
+          >
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" strokeLinecap="round" strokeLinejoin="round" />
+              <path d="M16 17l5-5-5-5M21 12H9" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+            <span className="hidden text-sm font-semibold lg:inline">Sign out</span>
+          </button>
           <ThemeToggle />
           <NotificationBell />
           <button
@@ -239,17 +243,8 @@ export function TopNav() {
             {NAV_LINKS.map((l) => (
               <NavLinkItem key={l.to} {...l} onClick={() => setDrawerOpen(false)} />
             ))}
-            <div className="mt-auto flex flex-col gap-2 border-t border-white/20 pt-3">
-              <div className="px-3">
-                <UserBadge />
-              </div>
-              <button
-                type="button"
-                className="tap-target flex items-center rounded-md px-3 text-sm font-semibold text-white/70 transition-colors duration-200 hover:bg-[var(--nav-active-bg)] hover:text-white"
-                onClick={signOut}
-              >
-                Sign out
-              </button>
+            <div className="mt-auto border-t border-white/20 px-3 pt-3">
+              <UserBadge />
             </div>
           </div>
         </div>

@@ -218,12 +218,9 @@ def me(user: dict = Depends(get_current_user)):
 
 @router.get("/auth/logout")
 def logout():
-    s = settings()
-    if s.mode == "microsoft":
-        from .auth import build_logout_url
-        target = build_logout_url()
-    else:
-        target = "/login"
-    resp = RedirectResponse(target, status_code=303)
+    # Only clears OUR session (the crm_session cookie). It does not sign the person out of
+    # Microsoft itself, so clicking "Sign in with Microsoft" again may skip straight past the
+    # picker — that's fine, since /auth/login already forces prompt=select_account.
+    resp = RedirectResponse("/login", status_code=303)
     resp.delete_cookie(COOKIE_NAME, path="/")
     return resp
