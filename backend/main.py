@@ -119,7 +119,7 @@ class User(Base):
     phone: Mapped[str | None] = mapped_column(String(50))
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
     # Sign-in fields (used by auth_service; `role` must be one of auth_service.models.ROLES)
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Sales Rep", server_default="Sales Rep")
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Sales Representative", server_default="Sales Representative")
     ms_oid: Mapped[str | None] = mapped_column(String(255), unique=True)  # filled on first Microsoft login
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
@@ -339,6 +339,22 @@ class Activity(AttributesMixin, Base):
     created_by: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
 
 
+class QualificationRequest(Base):
+    __tablename__ = "qualification_request"
+    id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
+    request_type: Mapped[str] = mapped_column(String(30), nullable=False)  # "lead_qualification" | "opportunity_qualification"
+    lead_id: Mapped[int | None] = mapped_column(ForeignKey("lead.id"), nullable=True)
+    opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("opportunity.id"), nullable=True)
+    status: Mapped[str] = mapped_column(String(20), nullable=False, default="Pending", server_default="Pending")
+    requested_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    requested_by_name: Mapped[str | None] = mapped_column(String(150))
+    requested_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    decided_by_id: Mapped[int | None] = mapped_column(ForeignKey("user.id"), nullable=True)
+    decided_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
+    result_opportunity_id: Mapped[int | None] = mapped_column(ForeignKey("opportunity.id"), nullable=True)
+    result_project_id: Mapped[int | None] = mapped_column(ForeignKey("project.id"), nullable=True)
+
+
 class VoiceDraft(Base):
     __tablename__ = "voice_draft"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
@@ -457,6 +473,42 @@ def pack_attributes(obj) -> list[str]:
 def apply_attributes(obj, values: list[str] | None):
     for k, v in unpack_attributes(values).items():
         setattr(obj, k, v)
+
+
+def log_system_activity(
+    db,
+    *,
+    action: str,
+    user_id: int | None,
+    account_id: int | None = None,
+    subsidiary_id: int | None = None,
+    contact_id: int | None = None,
+    lead_id: int | None = None,
+    opportunity_id: int | None = None,
+    project_id: int | None = None,
+) -> None:
+    """Invisible audit trail: record_type='System Generated' is never offered as a selectable
+    option in the Activity form and is excluded from /api/activities/overview — it exists purely
+    for the backend database. Added to the same session, not committed separately, so it rides in
+    the caller's existing transaction."""
+    db.add(Activity(
+        activity_name=action[:255],
+        record_type="System Generated",
+        record_action=action[:50],  # record_action is VARCHAR(50); the full text lives in activity_name
+        account_id=account_id,
+        subsidiary_id=subsidiary_id,
+        contact_id=contact_id,
+        lead_id=lead_id,
+        opportunity_id=opportunity_id,
+        project_id=project_id,
+        created_by=user_id,
+    ))
+
+
+def require_write_access(user: dict) -> None:
+    """Executive is a read-only role — full visibility, zero create/edit rights anywhere."""
+    if user["role"] == "Executive":
+        raise HTTPException(403, "The Executive role is read-only.")
 
 
 SERVICE_LINE_DELIM = "|"
@@ -1612,6 +1664,10 @@ setup_auth(app)
 REQUIRE_LOGIN = [Depends(get_current_user)]
 # User-management routes additionally require the Admin role.
 REQUIRE_ADMIN = [Depends(require_role("Admin"))]
+# Qualifications Pending page: Admin sees/approves both request types, Team Lead sees both but
+# only approves lead_qualification, Executive is read-only and can view but never approve/revoke
+# (enforced per-endpoint below, not by this page-level guard).
+REQUIRE_QUALIFICATION_VIEWER = [Depends(require_role("Admin", "Team Lead", "Executive"))]
 
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
@@ -1726,8 +1782,10 @@ def run_schema_migrations():
                 'UPDATE "user" SET role = r.role_name FROM "role" r '
                 'WHERE "user".role IS NULL AND cardinality("user".role_ids) > 0 AND r.id = "user".role_ids[1]'
             ))
-        conn.execute(text("UPDATE \"user\" SET role = 'Sales Rep' WHERE role IS NULL"))
-        conn.execute(text("ALTER TABLE \"user\" ALTER COLUMN \"role\" SET DEFAULT 'Sales Rep'"))
+        conn.execute(text("UPDATE \"user\" SET role = 'Sales Representative' WHERE role IS NULL"))
+        # LOV rename: "Sales Rep" -> "Sales Representative" (existing seeded/demo rows must migrate too).
+        conn.execute(text("UPDATE \"user\" SET role = 'Sales Representative' WHERE role = 'Sales Rep'"))
+        conn.execute(text("ALTER TABLE \"user\" ALTER COLUMN \"role\" SET DEFAULT 'Sales Representative'"))
         conn.execute(text('ALTER TABLE "user" ALTER COLUMN "role" SET NOT NULL'))
         conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_user_ms_oid ON "user" (ms_oid)'))
 
@@ -2120,58 +2178,83 @@ def get_activities_overview(db: Session = Depends(get_db)):
     lead_ids = {a.lead_id for a in activities if a.lead_id}
     opp_ids = {a.opportunity_id for a in activities if a.opportunity_id}
     proj_ids = {a.project_id for a in activities if a.project_id}
+    account_ids = {a.account_id for a in activities if a.account_id}
+    contact_ids = {a.contact_id for a in activities if a.contact_id}
+    subsidiary_ids = {a.subsidiary_id for a in activities if a.subsidiary_id}
 
-    lead_name = {}
-    if lead_ids:
-        for l in db.scalars(select(Lead).where(Lead.id.in_(lead_ids))).all():
-            lead_name[l.id] = l.lead_name
-    opp_name = {}
-    if opp_ids:
-        for o in db.scalars(select(Opportunity).where(Opportunity.id.in_(opp_ids))).all():
-            opp_name[o.id] = o.opportunity_name
-    proj_name = {}
-    if proj_ids:
-        for p in db.scalars(select(Project).where(Project.id.in_(proj_ids))).all():
-            proj_name[p.id] = p.project_name
+    lead_name = {l.id: l.lead_name for l in db.scalars(select(Lead).where(Lead.id.in_(lead_ids))).all()} if lead_ids else {}
+    opp_name = {o.id: o.opportunity_name for o in db.scalars(select(Opportunity).where(Opportunity.id.in_(opp_ids))).all()} if opp_ids else {}
+    proj_name = {p.id: p.project_name for p in db.scalars(select(Project).where(Project.id.in_(proj_ids))).all()} if proj_ids else {}
+    account_name_by_id = {a.id: a.account_name for a in db.scalars(select(Account).where(Account.id.in_(account_ids))).all()} if account_ids else {}
+    contact_name_by_id = {c.id: c.contact_name for c in db.scalars(select(Contact).where(Contact.id.in_(contact_ids))).all()} if contact_ids else {}
+    subsidiary_name_by_id = {
+        s.id: s.subsidiary_name for s in db.scalars(select(Subsidiary).where(Subsidiary.id.in_(subsidiary_ids))).all()
+    } if subsidiary_ids else {}
 
-    def linked_label(a: Activity) -> str:
-        rtype = (a.record_type or "").lower()
-        if rtype == "account":
-            return a.account_name or "N/A"
-        if rtype == "subsidiary":
-            return a.subsidiary_name or "N/A"
-        if rtype == "contact":
-            return a.contact_name or "N/A"
-        if rtype == "lead":
+    # System-generated rows (record_type == "System Generated") don't carry a single record_type
+    # the way manually-logged activities do — log_system_activity() may set several FK columns at
+    # once (e.g. approving a Lead Qualification sets both lead_id and the new opportunity_id). Pick
+    # the most specific/most-recently-touched entity so the row links to the record that actually
+    # changed, not just its parent Account.
+    def resolve_system_type(a: Activity) -> str | None:
+        if a.project_id:
+            return "Project"
+        if a.opportunity_id:
+            return "Opportunity"
+        if a.lead_id:
+            return "Lead"
+        if a.contact_id:
+            return "Contact"
+        if a.subsidiary_id:
+            return "Subsidiary"
+        if a.account_id:
+            return "Account"
+        return None
+
+    def effective_type(a: Activity) -> str:
+        if a.record_type == "System Generated":
+            return resolve_system_type(a) or "System Generated"
+        return a.record_type or "N/A"
+
+    def linked_label(a: Activity, rtype_lower: str) -> str:
+        if rtype_lower == "account":
+            return a.account_name or account_name_by_id.get(a.account_id, "N/A")
+        if rtype_lower == "subsidiary":
+            return a.subsidiary_name or subsidiary_name_by_id.get(a.subsidiary_id, "N/A")
+        if rtype_lower == "contact":
+            return a.contact_name or contact_name_by_id.get(a.contact_id, "N/A")
+        if rtype_lower == "lead":
             return lead_name.get(a.lead_id, "N/A")
-        if rtype == "opportunity":
+        if rtype_lower == "opportunity":
             return opp_name.get(a.opportunity_id, "N/A")
-        if rtype == "project":
+        if rtype_lower == "project":
             return proj_name.get(a.project_id, "N/A")
         return "N/A"
 
-    def linked_id(a: Activity):
-        rtype = (a.record_type or "").lower()
+    def linked_id(a: Activity, rtype_lower: str):
         return {
             "account": a.account_id, "subsidiary": a.subsidiary_id, "contact": a.contact_id,
             "lead": a.lead_id, "opportunity": a.opportunity_id, "project": a.project_id,
-        }.get(rtype)
+        }.get(rtype_lower)
 
-    return [
-        {
+    result = []
+    for a in activities:
+        etype = effective_type(a)
+        rtype_lower = etype.lower()
+        result.append({
             "id": a.id,
             "activity_name": a.activity_name,
-            "record_type": a.record_type or "N/A",
-            "linked_record_id": linked_id(a),
-            "linked_label": linked_label(a),
+            "record_type": etype,
+            "is_system": a.record_type == "System Generated",
+            "linked_record_id": linked_id(a, rtype_lower),
+            "linked_label": linked_label(a, rtype_lower),
             "record_action": a.record_action or "N/A",
             "activity_date": a.activity_date.strftime("%Y-%m-%d %H:%M") if a.activity_date else "N/A",
             "next_step": a.next_step or "N/A",
             "next_action_date": a.next_action_date.isoformat() if a.next_action_date else None,
             "notes": a.notes or "",
-        }
-        for a in activities
-    ]
+        })
+    return result
 
 
 # =====================================================================
@@ -2301,11 +2384,14 @@ def get_activity_detail(activity_id: int, db: Session = Depends(get_db)):
 # =====================================================================
 
 @app.post("/api/account/save", dependencies=REQUIRE_LOGIN)
-def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
+def save_account_form(data: AccountFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     account = None
     if data.account_id:
         account = db.scalar(select(Account).where(Account.id == data.account_id))
 
+    is_new = account is None
+    old_name = account.account_name if account else None
     if not account:
         account = Account(account_name=data.account_name)
         db.add(account)
@@ -2317,6 +2403,12 @@ def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
     account.website = data.website
     account.notes = data.notes
     apply_attributes(account, data.attributes)
+    db.flush()
+
+    if is_new:
+        log_system_activity(db, action="Account Created", user_id=user["uid"], account_id=account.id)
+    elif old_name != data.account_name:
+        log_system_activity(db, action="Editing Account name", user_id=user["uid"], account_id=account.id)
 
     db.commit()
     db.refresh(account)
@@ -2324,7 +2416,8 @@ def save_account_form(data: AccountFormIn, db: Session = Depends(get_db)):
 
 
 @app.post("/api/subsidiary/save", dependencies=REQUIRE_LOGIN)
-def save_subsidiary_form(data: SubsidiaryFormIn, db: Session = Depends(get_db)):
+def save_subsidiary_form(data: SubsidiaryFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     sub = None
     if data.subsidiary_id:
         sub = db.scalar(select(Subsidiary).where(Subsidiary.id == data.subsidiary_id))
@@ -2346,11 +2439,14 @@ def save_subsidiary_form(data: SubsidiaryFormIn, db: Session = Depends(get_db)):
 
 
 @app.post("/api/contact/save", dependencies=REQUIRE_LOGIN)
-def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
+def save_contact_form(data: ContactFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     contact = None
     if data.contact_id:
         contact = db.scalar(select(Contact).where(Contact.id == data.contact_id))
 
+    is_new = contact is None
+    old_name = contact.contact_name if contact else None
     if not contact:
         contact = Contact(account_id=data.account_id, contact_name=data.contact_name)
         db.add(contact)
@@ -2369,6 +2465,12 @@ def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
     contact.linkedin_url = data.linkedin_url
     contact.notes = data.notes
     apply_attributes(contact, data.attributes)
+    db.flush()
+
+    if is_new:
+        log_system_activity(db, action="Contact Created", user_id=user["uid"], contact_id=contact.id, account_id=contact.account_id)
+    elif old_name != data.contact_name:
+        log_system_activity(db, action="Editing Contact name", user_id=user["uid"], contact_id=contact.id, account_id=contact.account_id)
 
     db.commit()
     db.refresh(contact)
@@ -2376,11 +2478,15 @@ def save_contact_form(data: ContactFormIn, db: Session = Depends(get_db)):
 
 
 @app.post("/api/lead/save", dependencies=REQUIRE_LOGIN)
-def save_lead_form(data: LeadFormIn, db: Session = Depends(get_db)):
+def save_lead_form(data: LeadFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     lead = None
     if data.lead_id:
         lead = db.scalar(select(Lead).where(Lead.id == data.lead_id))
 
+    is_new = lead is None
+    old_stage = lead.stage if lead else None
+    old_name = lead.lead_name if lead else None
     if not lead:
         lead = Lead(account_id=data.account_id, contact_id=data.contact_id, lead_name=data.lead_name)
         db.add(lead)
@@ -2405,6 +2511,18 @@ def save_lead_form(data: LeadFormIn, db: Session = Depends(get_db)):
     lead.next_action_date = data.next_action_date
     lead.notes = data.notes
     apply_attributes(lead, data.attributes)
+    db.flush()
+
+    if is_new:
+        log_system_activity(db, action="Lead Created", user_id=user["uid"], lead_id=lead.id, account_id=lead.account_id)
+    else:
+        if old_stage != data.stage:
+            log_system_activity(
+                db, action=f"Lead Status Change: {old_stage} → {data.stage}",
+                user_id=user["uid"], lead_id=lead.id, account_id=lead.account_id,
+            )
+        if old_name != data.lead_name:
+            log_system_activity(db, action="Editing Lead name", user_id=user["uid"], lead_id=lead.id, account_id=lead.account_id)
 
     db.commit()
     db.refresh(lead)
@@ -2412,11 +2530,21 @@ def save_lead_form(data: LeadFormIn, db: Session = Depends(get_db)):
 
 
 @app.post("/api/opportunity/save", dependencies=REQUIRE_LOGIN)
-def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)):
+def save_opportunity_form(data: OpportunityFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     opp = None
     if data.opportunity_id:
         opp = db.scalar(select(Opportunity).where(Opportunity.id == data.opportunity_id))
 
+    if opp is None and user["role"] == "Sales Representative":
+        raise HTTPException(
+            403,
+            "Sales Representatives cannot create Opportunities directly — use Request for Qualification on the source Lead.",
+        )
+
+    is_new = opp is None
+    old_stage = opp.stage if opp else None
+    old_name = opp.opportunity_name if opp else None
     if not opp:
         opp = Opportunity(
             opportunity_name=data.opportunity_name,
@@ -2467,37 +2595,39 @@ def save_opportunity_form(data: OpportunityFormIn, db: Session = Depends(get_db)
 
     db.flush()
 
-    project_id = None
-    if "Closed Won" in opp.stage:
-        existing_proj = db.scalar(select(Project).where(Project.opportunity_id == opp.id))
-        if not existing_proj:
-            proj = Project(
-                opportunity_id=opp.id,
-                account_id=opp.account_id,
-                subsidiary_id=opp.subsidiary_id,
-                contact_id=opp.contact_id,
-                project_name=f"{opp.opportunity_name} — Delivery",
-                technology=opp.technology,
-                value=opp.deal_size,
-                currency=opp.currency,
-                stage="Awaited",
+    # Note: marking an Opportunity Closed Won no longer auto-creates a Project — a Team Lead must
+    # request qualification (POST /api/qualifications/opportunity/{id}/request) and Admin must
+    # approve it. See approve_qualification() below for the Project-creation logic this replaced.
+    if is_new:
+        log_system_activity(db, action="Opportunity Created", user_id=user["uid"], opportunity_id=opp.id, account_id=opp.account_id)
+    else:
+        if old_stage != data.stage:
+            log_system_activity(
+                db, action=f"Opportunity Stage Change from {old_stage} to {data.stage}",
+                user_id=user["uid"], opportunity_id=opp.id, account_id=opp.account_id,
             )
-            db.add(proj)
-            db.flush()
-            project_id = proj.id
-        else:
-            project_id = existing_proj.id
+        if old_name != data.opportunity_name:
+            log_system_activity(db, action="Editing Opportunity name", user_id=user["uid"], opportunity_id=opp.id, account_id=opp.account_id)
 
     db.commit()
-    return {"status": "success", "opportunity_id": opp.id, "project_id": project_id}
+    return {"status": "success", "opportunity_id": opp.id}
 
 
 @app.post("/api/project/save", dependencies=REQUIRE_LOGIN)
-def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
+def save_project_form(data: ProjectFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     proj = None
     if data.project_id:
         proj = db.scalar(select(Project).where(Project.id == data.project_id))
 
+    if proj is None and user["role"] != "Admin":
+        raise HTTPException(
+            403,
+            "Only Admin can create Projects directly — Projects are created by approving an Opportunity Qualification request.",
+        )
+
+    is_new = proj is None
+    old_stage = proj.stage if proj else None
     if not proj:
         proj = Project(
             opportunity_id=data.opportunity_id,
@@ -2529,6 +2659,16 @@ def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
         proj.notes = data.notes
 
     apply_attributes(proj, data.attributes)
+    db.flush()
+
+    new_stage = data.po_status or "Awaited"
+    if is_new:
+        log_system_activity(db, action="Project Created", user_id=user["uid"], project_id=proj.id, account_id=proj.account_id)
+    elif old_stage != new_stage:
+        log_system_activity(
+            db, action=f"Project Status Change from {old_stage} to {new_stage}",
+            user_id=user["uid"], project_id=proj.id, account_id=proj.account_id,
+        )
 
     db.commit()
     db.refresh(proj)
@@ -2536,7 +2676,8 @@ def save_project_form(data: ProjectFormIn, db: Session = Depends(get_db)):
 
 
 @app.post("/api/activity/save", dependencies=REQUIRE_LOGIN)
-def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
+def save_activity_form(data: ActivityFormIn, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    require_write_access(user)
     act = None
     if data.activity_id:
         act = db.scalar(select(Activity).where(Activity.id == data.activity_id))
@@ -2652,6 +2793,219 @@ def save_user_form(data: UserFormIn, db: Session = Depends(get_db)):
     db.refresh(user)
 
     return {"status": "success", "user_id": user.id}
+
+
+# =====================================================================
+# Qualification Requests
+# Lead Qualification (Sales Representative -> Admin/Team Lead, approval auto-creates an
+# Opportunity) and Opportunity Qualification (Team Lead -> Admin, approval auto-creates a
+# Project). See the QualificationRequest model above.
+# =====================================================================
+
+@app.post("/api/qualifications/lead/{lead_id}/request", dependencies=REQUIRE_LOGIN)
+def request_lead_qualification(lead_id: int, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user["role"] not in ("Sales Representative", "Admin"):
+        raise HTTPException(403, "Only a Sales Representative can request Lead Qualification.")
+
+    lead = db.scalar(select(Lead).where(Lead.id == lead_id))
+    if not lead:
+        raise HTTPException(404, "Lead not found.")
+
+    existing = db.scalar(
+        select(QualificationRequest).where(
+            QualificationRequest.request_type == "lead_qualification",
+            QualificationRequest.lead_id == lead_id,
+            QualificationRequest.status == "Pending",
+        )
+    )
+    if existing:
+        raise HTTPException(409, "A qualification request for this Lead is already pending.")
+
+    req = QualificationRequest(
+        request_type="lead_qualification", lead_id=lead_id,
+        requested_by_id=user["uid"], requested_by_name=user["name"],
+    )
+    db.add(req)
+    db.flush()
+    log_system_activity(db, action="Lead Qualification Requested", user_id=user["uid"], lead_id=lead_id, account_id=lead.account_id)
+    db.commit()
+    return {"status": "success", "request_id": req.id}
+
+
+@app.post("/api/qualifications/opportunity/{opportunity_id}/request", dependencies=REQUIRE_LOGIN)
+def request_opportunity_qualification(opportunity_id: int, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    if user["role"] not in ("Team Lead", "Admin"):
+        raise HTTPException(403, "Only a Team Lead can request Opportunity Qualification.")
+
+    opp = db.scalar(select(Opportunity).where(Opportunity.id == opportunity_id))
+    if not opp:
+        raise HTTPException(404, "Opportunity not found.")
+    if "Closed Won" not in (opp.stage or ""):
+        raise HTTPException(400, "Only a Closed Won Opportunity can be sent for Project qualification.")
+
+    if db.scalar(select(Project).where(Project.opportunity_id == opportunity_id)):
+        raise HTTPException(409, "A Project already exists for this Opportunity.")
+
+    existing_req = db.scalar(
+        select(QualificationRequest).where(
+            QualificationRequest.request_type == "opportunity_qualification",
+            QualificationRequest.opportunity_id == opportunity_id,
+            QualificationRequest.status == "Pending",
+        )
+    )
+    if existing_req:
+        raise HTTPException(409, "A qualification request for this Opportunity is already pending.")
+
+    req = QualificationRequest(
+        request_type="opportunity_qualification", opportunity_id=opportunity_id,
+        requested_by_id=user["uid"], requested_by_name=user["name"],
+    )
+    db.add(req)
+    db.flush()
+    log_system_activity(db, action="Opportunity Qualification Requested", user_id=user["uid"], opportunity_id=opportunity_id, account_id=opp.account_id)
+    db.commit()
+    return {"status": "success", "request_id": req.id}
+
+
+@app.get("/api/qualifications/overview", dependencies=REQUIRE_QUALIFICATION_VIEWER)
+def get_qualifications_overview(user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    reqs = db.scalars(select(QualificationRequest).order_by(QualificationRequest.id.desc())).all()
+
+    lead_ids = {r.lead_id for r in reqs if r.lead_id}
+    opp_ids = {r.opportunity_id for r in reqs if r.opportunity_id}
+    lead_name = {l.id: l.lead_name for l in db.scalars(select(Lead).where(Lead.id.in_(lead_ids))).all()} if lead_ids else {}
+    opp_name = {o.id: o.opportunity_name for o in db.scalars(select(Opportunity).where(Opportunity.id.in_(opp_ids))).all()} if opp_ids else {}
+
+    is_admin = user["role"] == "Admin"
+    is_team_lead = user["role"] == "Team Lead"
+    result = []
+    for r in reqs:
+        result.append({
+            "id": r.id,
+            "request_type": r.request_type,
+            "linked_label": lead_name.get(r.lead_id) if r.request_type == "lead_qualification" else opp_name.get(r.opportunity_id),
+            "lead_id": r.lead_id,
+            "opportunity_id": r.opportunity_id,
+            "status": r.status,
+            "requested_by_name": r.requested_by_name,
+            "requested_at": r.requested_at.isoformat() if r.requested_at else None,
+            "decided_at": r.decided_at.isoformat() if r.decided_at else None,
+            "can_approve": is_admin or (is_team_lead and r.request_type == "lead_qualification"),
+        })
+    return result
+
+
+def _approve_lead_qualification(req: "QualificationRequest", db: Session, user_id: int) -> int:
+    lead = db.scalar(select(Lead).where(Lead.id == req.lead_id))
+    if not lead:
+        raise HTTPException(404, "Source Lead no longer exists.")
+    opp = Opportunity(
+        opportunity_name=lead.lead_name,
+        lead_id=lead.id,
+        account_id=lead.account_id,
+        subsidiary_id=lead.subsidiary_id,
+        contact_id=lead.contact_id,
+        account_manager=lead.account_manager,
+        deal_size=lead.deal_size,
+        currency=lead.currency or "AED",
+        project_type=lead.project_type,
+        referred_by=lead.referred_by,
+        service_line=lead.service_line,
+        technology=lead.technology,
+        stage="Discovery — 40%",
+        probability=40,
+        opportunity_type="New",
+        funded_by="Client",
+        opportunity_source=lead.lead_source if (lead.lead_source and lead.lead_source != "Campaign") else None,
+        next_steps=lead.next_steps,
+        next_action_date=lead.next_action_date,
+        notes=lead.notes,
+    )
+    apply_attributes(opp, pack_attributes(lead))
+    db.add(opp)
+    db.flush()
+    log_system_activity(
+        db, action="Lead Qualification Approved — Opportunity Created", user_id=user_id,
+        lead_id=lead.id, opportunity_id=opp.id, account_id=lead.account_id,
+    )
+    return opp.id
+
+
+def _approve_opportunity_qualification(req: "QualificationRequest", db: Session, user_id: int) -> int:
+    opp = db.scalar(select(Opportunity).where(Opportunity.id == req.opportunity_id))
+    if not opp:
+        raise HTTPException(404, "Source Opportunity no longer exists.")
+    proj = Project(
+        opportunity_id=opp.id,
+        account_id=opp.account_id,
+        subsidiary_id=opp.subsidiary_id,
+        contact_id=opp.contact_id,
+        project_name=f"{opp.opportunity_name} — Delivery",
+        technology=opp.technology,
+        value=opp.deal_size,
+        currency=opp.currency,
+        stage="Awaited",
+    )
+    db.add(proj)
+    db.flush()
+    log_system_activity(
+        db, action="Opportunity Qualification Approved — Project Created", user_id=user_id,
+        opportunity_id=opp.id, project_id=proj.id, account_id=opp.account_id,
+    )
+    return proj.id
+
+
+@app.post("/api/qualifications/{request_id}/approve", dependencies=REQUIRE_LOGIN)
+def approve_qualification(request_id: int, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    req = db.scalar(select(QualificationRequest).where(QualificationRequest.id == request_id))
+    if not req:
+        raise HTTPException(404, "Qualification request not found.")
+    if req.status != "Pending":
+        raise HTTPException(409, f"This request has already been {req.status.lower()}.")
+
+    if req.request_type == "lead_qualification":
+        if user["role"] not in ("Admin", "Team Lead"):
+            raise HTTPException(403, "Only Admin or Team Lead can approve a Lead Qualification request.")
+        req.result_opportunity_id = _approve_lead_qualification(req, db, user["uid"])
+    elif req.request_type == "opportunity_qualification":
+        if user["role"] != "Admin":
+            raise HTTPException(403, "Only Admin can approve an Opportunity Qualification request.")
+        req.result_project_id = _approve_opportunity_qualification(req, db, user["uid"])
+    else:
+        raise HTTPException(400, "Unknown request type.")
+
+    req.status = "Approved"
+    req.decided_by_id = user["uid"]
+    req.decided_at = datetime.now()
+    db.commit()
+    return {
+        "status": "success", "request_id": req.id,
+        "result_opportunity_id": req.result_opportunity_id, "result_project_id": req.result_project_id,
+    }
+
+
+@app.post("/api/qualifications/{request_id}/revoke", dependencies=REQUIRE_LOGIN)
+def revoke_qualification(request_id: int, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
+    req = db.scalar(select(QualificationRequest).where(QualificationRequest.id == request_id))
+    if not req:
+        raise HTTPException(404, "Qualification request not found.")
+    if req.status != "Pending":
+        raise HTTPException(409, f"This request has already been {req.status.lower()}.")
+
+    if req.request_type == "lead_qualification" and user["role"] not in ("Admin", "Team Lead"):
+        raise HTTPException(403, "Only Admin or Team Lead can revoke a Lead Qualification request.")
+    if req.request_type == "opportunity_qualification" and user["role"] != "Admin":
+        raise HTTPException(403, "Only Admin can revoke an Opportunity Qualification request.")
+
+    req.status = "Revoked"
+    req.decided_by_id = user["uid"]
+    req.decided_at = datetime.now()
+    log_system_activity(
+        db, action=f"{'Lead' if req.request_type == 'lead_qualification' else 'Opportunity'} Qualification Revoked",
+        user_id=user["uid"], lead_id=req.lead_id, opportunity_id=req.opportunity_id,
+    )
+    db.commit()
+    return {"status": "success", "request_id": req.id}
 
 
 # =====================================================================

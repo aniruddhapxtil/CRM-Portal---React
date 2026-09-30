@@ -1,6 +1,6 @@
 """
 Admin tool: give someone CRM access (they can then sign in with Microsoft).
-    python -m auth_service.seed_user add rahul@company.com "Rahul Sharma" "Sales Rep"
+    python -m auth_service.seed_user add rahul@company.com "Rahul Sharma" "Sales Representative"
     python -m auth_service.seed_user list
     python -m auth_service.seed_user deactivate rahul@company.com
 The email must be the person's Microsoft work sign-in name.
@@ -25,7 +25,7 @@ def main() -> None:
                 print(f"{u.id:>3}  {u.email:<40} {u.role:<12} {'active' if u.is_active else 'INACTIVE'}")
         elif cmd == "add" and len(args) >= 3:
             email, name = args[1].strip().lower(), args[2]
-            role = args[3] if len(args) > 3 else "Sales Rep"
+            role = args[3] if len(args) > 3 else "Sales Representative"
             if role not in ROLES:
                 print(f"Role must be one of: {', '.join(ROLES)}")
                 sys.exit(1)

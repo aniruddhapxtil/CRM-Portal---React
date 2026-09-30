@@ -11,6 +11,7 @@ import { SearchableSelect, type SearchableOption } from "../../components/ui/Sea
 import { Modal } from "../../components/ui/Modal";
 import { Button } from "../../components/ui/Button";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { useNotifications } from "../../context/NotificationContext";
 import { getLookups } from "../../api/lookups";
 import { getActivity, saveActivity } from "../../api/activities";
@@ -76,6 +77,7 @@ export function ActivityFormPage() {
   const [searchParams] = useSearchParams();
   const toast = useToast();
   const { notify } = useNotifications();
+  const isReadOnly = useAuth().role === "Executive";
 
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [form, setForm] = useState<ActivityFormIn>(emptyForm);
@@ -282,7 +284,7 @@ export function ActivityFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Activity" title="Loading…" />
+        <PageHeader title="Loading…" />
       </AppLayout>
     );
   }
@@ -290,7 +292,6 @@ export function ActivityFormPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Activity"
         title={isEdit ? "Edit Activity" : "Log Activity"}
         subtitle="Record an interaction against an Account, Lead, Opportunity, Project, or Campaign."
         actions={
@@ -298,8 +299,8 @@ export function ActivityFormPage() {
             <Button variant="outline" onClick={() => navigate("/activities")}>
               Cancel
             </Button>
-            <Button onClick={onSave} disabled={saving}>
-              {saving ? "Saving…" : "Save Activity"}
+            <Button onClick={onSave} disabled={saving || isReadOnly}>
+              {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Activity"}
             </Button>
           </>
         }

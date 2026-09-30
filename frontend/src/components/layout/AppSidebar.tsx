@@ -9,7 +9,8 @@ interface NavItem {
   to: string;
   label: string;
   icon: ReactNode;
-  adminOnly?: boolean;
+  /** When set, only shown to users whose role is in this list. Omit to show to everyone. */
+  roles?: string[];
 }
 
 function Icon({ children }: { children: ReactNode }) {
@@ -108,9 +109,20 @@ const NAV_ITEMS: NavItem[] = [
     ),
   },
   {
+    to: "/qualifications",
+    label: "Qualifications",
+    roles: ["Admin", "Team Lead", "Executive"],
+    icon: (
+      <Icon>
+        <path d="M9 11l3 3L22 4" />
+        <path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11" />
+      </Icon>
+    ),
+  },
+  {
     to: "/admin/users",
     label: "Users",
-    adminOnly: true,
+    roles: ["Admin"],
     icon: (
       <Icon>
         <path d="M12 2 4 5v6c0 5 3.5 8.5 8 10 4.5-1.5 8-5 8-10V5z" />
@@ -157,7 +169,7 @@ export function AppSidebar({ mobileOpen, onCloseMobile }: { mobileOpen: boolean;
     }
   }, [collapsed]);
 
-  const items = NAV_ITEMS.filter((i) => !i.adminOnly || user.role === "Admin");
+  const items = NAV_ITEMS.filter((i) => !i.roles || i.roles.includes(user.role));
 
   function content(isCollapsedVariant: boolean, onNavClick?: () => void) {
     return (

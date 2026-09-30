@@ -7,12 +7,14 @@ import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { DataTable, type DataTableColumn } from "../../components/ui/DataTable";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getSubsidiariesOverview } from "../../api/subsidiaries";
 import type { SubsidiaryOverviewRow } from "../../types/entities";
 
 export function SubsidiariesRegistryPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
   const [rows, setRows] = useState<SubsidiaryOverviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -46,7 +48,7 @@ export function SubsidiariesRegistryPage() {
             navigate(`/subsidiaries/${r.id}/edit`);
           }}
         >
-          Edit
+          {isReadOnly ? "View" : "Edit"}
         </Button>
       ),
     },
@@ -55,10 +57,9 @@ export function SubsidiariesRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Subsidiaries"
         title="Subsidiaries"
         subtitle="Branches and divisions under parent accounts."
-        actions={<Button onClick={() => navigate("/subsidiaries/new")}>+ New Subsidiary</Button>}
+        actions={!isReadOnly && <Button onClick={() => navigate("/subsidiaries/new")}>+ New Subsidiary</Button>}
       />
 
       <DataTable
@@ -104,16 +105,18 @@ export function SubsidiariesRegistryPage() {
           <Card
             title={`Contacts of ${selected.subsidiary_name}`}
             actions={
-              <Button
-                variant="outline"
-                onClick={() =>
-                  navigate(
-                    `/contacts/new?account_id=${selected.account_id}&subsidiary_id=${selected.id}&subsidiary_name=${encodeURIComponent(selected.subsidiary_name)}`,
-                  )
-                }
-              >
-                + Add Contact
-              </Button>
+              !isReadOnly && (
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    navigate(
+                      `/contacts/new?account_id=${selected.account_id}&subsidiary_id=${selected.id}&subsidiary_name=${encodeURIComponent(selected.subsidiary_name)}`,
+                    )
+                  }
+                >
+                  + Add Contact
+                </Button>
+              )
             }
           >
             {selected.contacts.length === 0 ? (

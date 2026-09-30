@@ -11,7 +11,7 @@ def utcnow() -> datetime:
     return datetime.now(timezone.utc).replace(tzinfo=None)
 
 # Edit this list to match the CRM's `role` table.
-ROLES = ["Admin", "Executive", "Team Lead", "Sales Rep"]
+ROLES = ["Admin", "Executive", "Team Lead", "Sales Representative"]
 
 
 class User(Base):
@@ -33,7 +33,7 @@ class User(Base):
     designation: Mapped[str | None] = mapped_column(String(150))
     region: Mapped[str | None] = mapped_column(String(100))
     phone: Mapped[str | None] = mapped_column(String(50))
-    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Sales Rep")
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Sales Representative")
     ms_oid: Mapped[str | None] = mapped_column(String(255), unique=True)  # filled on first Microsoft login
     is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
     created_at: Mapped[datetime] = mapped_column("creation_date", DateTime(timezone=True), server_default=func.now())

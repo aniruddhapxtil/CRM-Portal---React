@@ -214,7 +214,6 @@ export function VoiceStationPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Voice CRM Ingestion Engine"
         title="Universal Voice Station"
         subtitle="Speak commercial notes — the engine transcribes, extracts entities, and stages every field for review before it's committed."
       />

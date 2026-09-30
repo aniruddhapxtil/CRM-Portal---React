@@ -7,12 +7,14 @@ import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { DataTable, type DataTableColumn } from "../../components/ui/DataTable";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getContactsOverview } from "../../api/contacts";
 import type { ContactOverviewRow } from "../../types/entities";
 
 export function ContactsRegistryPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
   const [rows, setRows] = useState<ContactOverviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -57,7 +59,7 @@ export function ContactsRegistryPage() {
             navigate(`/contacts/${r.id}/edit`);
           }}
         >
-          Edit
+          {isReadOnly ? "View" : "Edit"}
         </Button>
       ),
     },
@@ -66,10 +68,9 @@ export function ContactsRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Contacts"
         title="Contacts"
         subtitle="Client stakeholders across accounts and subsidiaries."
-        actions={<Button onClick={() => navigate("/contacts/new")}>+ New Contact</Button>}
+        actions={!isReadOnly && <Button onClick={() => navigate("/contacts/new")}>+ New Contact</Button>}
       />
 
       <DataTable
@@ -112,14 +113,16 @@ export function ContactsRegistryPage() {
           <Card
             title="Associated Leads & Deals"
             actions={
-              <Button
-                variant="outline"
-                onClick={() =>
-                  navigate(`/leads/new?contact_id=${selected.id}&account_id=${selected.account_id}`)
-                }
-              >
-                + Create Lead
-              </Button>
+              !isReadOnly && (
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    navigate(`/leads/new?contact_id=${selected.id}&account_id=${selected.account_id}`)
+                  }
+                >
+                  + Create Lead
+                </Button>
+              )
             }
           >
             {dealsForSelected.length === 0 ? (

@@ -7,12 +7,14 @@ import { Button } from "../../components/ui/Button";
 import { Badge } from "../../components/ui/Badge";
 import { DataTable, type DataTableColumn } from "../../components/ui/DataTable";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getAccountsOverview } from "../../api/accounts";
 import type { AccountOverviewRow } from "../../types/entities";
 
 export function AccountsRegistryPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
   const [rows, setRows] = useState<AccountOverviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [selectedId, setSelectedId] = useState<number | null>(null);
@@ -63,7 +65,7 @@ export function AccountsRegistryPage() {
             navigate(`/accounts/${r.id}/edit`);
           }}
         >
-          Edit
+          {isReadOnly ? "View" : "Edit"}
         </Button>
       ),
     },
@@ -72,10 +74,9 @@ export function AccountsRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Accounts"
         title="Accounts"
         subtitle="Parent enterprise accounts — the top of the DataPhi CRM hierarchy."
-        actions={<Button onClick={() => navigate("/accounts/new")}>+ New Account</Button>}
+        actions={!isReadOnly && <Button onClick={() => navigate("/accounts/new")}>+ New Account</Button>}
       />
 
       <DataTable
@@ -98,16 +99,18 @@ export function AccountsRegistryPage() {
           <Card
             title={`Subsidiaries of ${selected.account_name}`}
             actions={
-              <Button
-                variant="outline"
-                onClick={() =>
-                  navigate(
-                    `/subsidiaries/new?account_id=${selected.id}&account_name=${encodeURIComponent(selected.account_name)}`,
-                  )
-                }
-              >
-                + Add
-              </Button>
+              !isReadOnly && (
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    navigate(
+                      `/subsidiaries/new?account_id=${selected.id}&account_name=${encodeURIComponent(selected.account_name)}`,
+                    )
+                  }
+                >
+                  + Add
+                </Button>
+              )
             }
           >
             {selected.subsidiaries.length === 0 ? (
@@ -137,16 +140,18 @@ export function AccountsRegistryPage() {
           <Card
             title={`Contacts of ${selected.account_name}`}
             actions={
-              <Button
-                variant="outline"
-                onClick={() =>
-                  navigate(
-                    `/contacts/new?account_id=${selected.id}&account_name=${encodeURIComponent(selected.account_name)}`,
-                  )
-                }
-              >
-                + Add
-              </Button>
+              !isReadOnly && (
+                <Button
+                  variant="outline"
+                  onClick={() =>
+                    navigate(
+                      `/contacts/new?account_id=${selected.id}&account_name=${encodeURIComponent(selected.account_name)}`,
+                    )
+                  }
+                >
+                  + Add
+                </Button>
+              )
             }
           >
             {selected.contacts.length === 0 ? (

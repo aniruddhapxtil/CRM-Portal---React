@@ -85,4 +85,4 @@ export const ACTIVITY_RECORD_TYPE_OPTIONS = ["Account", "Lead", "Opportunity", "
 export const ACTIVITY_RECORD_ACTION_OPTIONS = ["Email", "LinkedIn", "Meeting", "Phone Call", "WhatsApp", "Messages"] as const;
 
 /** Must exactly match auth_service.models.ROLES — that's what actually gates sign-in access. */
-export const ADMIN_ROLE_OPTIONS = ["Admin", "Executive", "Team Lead", "Sales Rep"] as const;
+export const ADMIN_ROLE_OPTIONS = ["Admin", "Executive", "Team Lead", "Sales Representative"] as const;

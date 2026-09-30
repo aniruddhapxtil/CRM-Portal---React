@@ -11,7 +11,9 @@ import { SearchableSelect, type SearchableOption } from "../../components/ui/Sea
 import { MultiSelect } from "../../components/ui/MultiSelect";
 import { useToast } from "../../components/ui/Toast";
 import { useNotifications } from "../../context/NotificationContext";
+import { useAuth } from "../../context/AuthContext";
 import { getLead, saveLead } from "../../api/leads";
+import { requestLeadQualification } from "../../api/qualifications";
 import { getAccount } from "../../api/accounts";
 import { getContact } from "../../api/contacts";
 import { getLookups } from "../../api/lookups";
@@ -58,6 +60,22 @@ export function LeadFormPage() {
   const [searchParams] = useSearchParams();
   const toast = useToast();
   const { notify } = useNotifications();
+  const user = useAuth();
+  const isReadOnly = user.role === "Executive";
+  const [requestingQual, setRequestingQual] = useState(false);
+
+  async function onRequestQualification() {
+    if (!id) return;
+    setRequestingQual(true);
+    try {
+      await requestLeadQualification(Number(id));
+      toast.show("Qualification requested — sent to Admin and Team Lead for approval.", "success");
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : "Failed to request qualification.", "danger");
+    } finally {
+      setRequestingQual(false);
+    }
+  }
 
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [form, setForm] = useState<LeadFormIn>(EMPTY);
@@ -182,7 +200,7 @@ export function LeadFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Leads" title={isEdit ? "Edit Lead" : "New Lead"} />
+        <PageHeader title={isEdit ? "Edit Lead" : "New Lead"} />
         <div className="p-12 text-center text-sm text-muted">Loading…</div>
       </AppLayout>
     );
@@ -191,14 +209,13 @@ export function LeadFormPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Leads"
         title={isEdit ? "Edit Lead" : "New Lead"}
         subtitle="Pre-opportunity commercial interest captured from a stakeholder conversation."
         actions={
           <>
             <Button variant="outline" onClick={() => navigate("/leads")}>Cancel</Button>
-            <Button onClick={handleSave} disabled={!canSave || saving}>
-              {saving ? "Saving…" : "Save Lead"}
+            <Button onClick={handleSave} disabled={!canSave || saving || isReadOnly}>
+              {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Lead"}
             </Button>
           </>
         }
@@ -379,7 +396,15 @@ export function LeadFormPage() {
           recordId={meta.recordId ? `LEAD-${meta.recordId}` : undefined}
           attributes={form.attributes}
           onAttributesChange={(v) => set("attributes", v)}
-        />
+        >
+          {isEdit && user.role === "Sales Representative" && (
+            <Card title="Qualification">
+              <Button className="w-full" onClick={onRequestQualification} disabled={requestingQual}>
+                {requestingQual ? "Requesting…" : "Request for Qualification"}
+              </Button>
+            </Card>
+          )}
+        </Sidebar>
       </div>
     </AppLayout>
   );

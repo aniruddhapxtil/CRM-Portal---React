@@ -11,7 +11,7 @@ DEMO_USERS = [
     ("admin@dataphi.demo", "Demo Admin", "Admin"),
     ("executive@dataphi.demo", "Demo Executive", "Executive"),
     ("lead@dataphi.demo", "Demo Team Lead", "Team Lead"),
-    ("rep@dataphi.demo", "Demo Sales Rep", "Sales Rep"),
+    ("rep@dataphi.demo", "Demo Sales Rep", "Sales Representative"),
 ]
 
 

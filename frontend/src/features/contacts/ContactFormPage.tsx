@@ -8,6 +8,7 @@ import { Button } from "../../components/ui/Button";
 import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
 import { SearchableSelect, type SearchableOption } from "../../components/ui/SearchableSelect";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getContact, saveContact } from "../../api/contacts";
 import { getLookups } from "../../api/lookups";
 import { COUNTRY_CODES, DEFAULT_COUNTRY_DIAL_CODE } from "../../constants/countryCodes";
@@ -43,6 +44,7 @@ export function ContactFormPage() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
 
   const [form, setForm] = useState<ContactFormIn>(BLANK);
   const [lookups, setLookups] = useState<Lookups | null>(null);
@@ -140,7 +142,7 @@ export function ContactFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Contacts" title="Loading…" />
+        <PageHeader title="Loading…" />
       </AppLayout>
     );
   }
@@ -149,7 +151,6 @@ export function ContactFormPage() {
     <AppLayout>
       <form onSubmit={onSubmit}>
         <PageHeader
-          crumb="Contacts"
           title={isEdit ? "Edit Contact" : "New Contact"}
           subtitle="Client stakeholder linked to an account (and optionally a subsidiary)."
           actions={
@@ -157,8 +158,8 @@ export function ContactFormPage() {
               <Button type="button" variant="outline" onClick={() => navigate("/contacts")}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={saving}>
-                {saving ? "Saving…" : "Save Contact"}
+              <Button type="submit" disabled={saving || isReadOnly}>
+                {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Contact"}
               </Button>
             </>
           }

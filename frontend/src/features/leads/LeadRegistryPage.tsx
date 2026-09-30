@@ -8,8 +8,11 @@ import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { Card } from "../../components/ui/Card";
 import { getLeadsOverview } from "../../api/leads";
+import { requestLeadQualification } from "../../api/qualifications";
 import { SERVICE_LINE_OPTIONS } from "../../constants/options";
 import type { LeadOverviewRow } from "../../types/entities";
+import { useAuth } from "../../context/AuthContext";
+import { useToast } from "../../components/ui/Toast";
 
 function classificationTone(type: string | null): "danger" | "warning" | "brand" | "neutral" {
   if (type === "Hot") return "danger";
@@ -20,10 +23,23 @@ function classificationTone(type: string | null): "danger" | "warning" | "brand"
 
 export function LeadRegistryPage() {
   const navigate = useNavigate();
+  const user = useAuth();
+  const toast = useToast();
+  const isSalesRep = user.role === "Sales Representative";
+  const isReadOnly = user.role === "Executive";
   const [rows, setRows] = useState<LeadOverviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serviceLineFilter, setServiceLineFilter] = useState("");
   const [selected, setSelected] = useState<LeadOverviewRow | null>(null);
+
+  async function onRequestQualification(leadId: number) {
+    try {
+      await requestLeadQualification(leadId);
+      toast.show("Qualification requested — sent to Admin and Team Lead for approval.", "success");
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : "Failed to request qualification.", "danger");
+    }
+  }
 
   useEffect(() => {
     getLeadsOverview()
@@ -64,9 +80,22 @@ export function LeadRegistryPage() {
       key: "action",
       header: "Action",
       render: (r) => (
-        <Button variant="outline" onClick={(e) => { e.stopPropagation(); navigate(`/leads/${r.id}/edit`); }}>
-          Edit
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={(e) => { e.stopPropagation(); navigate(`/leads/${r.id}/edit`); }}>
+            {isReadOnly ? "View" : "Edit"}
+          </Button>
+          {isSalesRep && (
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestQualification(r.id);
+              }}
+            >
+              Request Qualification
+            </Button>
+          )}
+        </div>
       ),
     },
   ];
@@ -74,10 +103,9 @@ export function LeadRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Leads"
         title="Leads"
         subtitle="Pre-opportunity commercial interest, qualified from stakeholder conversations."
-        actions={<Button onClick={() => navigate("/leads/new")}>+ New Lead</Button>}
+        actions={!isReadOnly && <Button onClick={() => navigate("/leads/new")}>+ New Lead</Button>}
       />
 
       <DataTable
@@ -110,16 +138,18 @@ export function LeadRegistryPage() {
               <div className="flex justify-between"><span className="text-muted">Account</span><span className="font-semibold">{selected.account_name}</span></div>
               <div className="flex justify-between"><span className="text-muted">Account Manager</span><span>{selected.account_manager ?? "—"}</span></div>
               <div className="flex justify-between"><span className="text-muted">Contact</span><span className="font-semibold">{selected.contact_name}</span></div>
-              <Button
-                className="mt-2"
-                onClick={() =>
-                  navigate(
-                    `/opportunities/new?lead_id=${selected.id}&account_id=${selected.account_id}&contact_id=${selected.contact_id}`,
-                  )
-                }
-              >
-                Convert to Opportunity
-              </Button>
+              {!isSalesRep && !isReadOnly && (
+                <Button
+                  className="mt-2"
+                  onClick={() =>
+                    navigate(
+                      `/opportunities/new?lead_id=${selected.id}&account_id=${selected.account_id}&contact_id=${selected.contact_id}`,
+                    )
+                  }
+                >
+                  Convert to Opportunity
+                </Button>
+              )}
             </div>
           </Card>
 
@@ -144,12 +174,14 @@ export function LeadRegistryPage() {
           <Card
             title="Linked Activities"
             actions={
-              <Button
-                variant="outline"
-                onClick={() => navigate(`/activities/new?record_type=Lead&linked_record_id=${selected.id}`)}
-              >
-                Log Activity
-              </Button>
+              !isReadOnly && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/activities/new?record_type=Lead&linked_record_id=${selected.id}`)}
+                >
+                  Log Activity
+                </Button>
+              )
             }
           >
             <div className="flex flex-col gap-2 text-sm">

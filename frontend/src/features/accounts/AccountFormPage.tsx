@@ -8,6 +8,7 @@ import { Button } from "../../components/ui/Button";
 import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getAccount, saveAccount } from "../../api/accounts";
 import { REGION_OPTIONS, INDUSTRY_OPTIONS } from "../../constants/options";
 import type { AccountFormIn } from "../../types/entities";
@@ -27,6 +28,7 @@ export function AccountFormPage() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
 
   const [form, setForm] = useState<AccountFormIn>(BLANK);
   const [loading, setLoading] = useState(isEdit);
@@ -76,7 +78,7 @@ export function AccountFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Accounts" title="Loading…" />
+        <PageHeader title="Loading…" />
       </AppLayout>
     );
   }
@@ -85,7 +87,6 @@ export function AccountFormPage() {
     <AppLayout>
       <form onSubmit={onSubmit}>
         <PageHeader
-          crumb="Accounts"
           title={isEdit ? `Edit Account` : "New Account"}
           subtitle="Parent enterprise account — top of the DataPhi CRM hierarchy."
           actions={
@@ -93,8 +94,8 @@ export function AccountFormPage() {
               <Button type="button" variant="outline" onClick={() => navigate("/accounts")}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={saving || nameMissing}>
-                {saving ? "Saving…" : "Save Account"}
+              <Button type="submit" disabled={saving || nameMissing || isReadOnly}>
+                {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Account"}
               </Button>
             </>
           }

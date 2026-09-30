@@ -7,6 +7,7 @@ import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { DataTable, type DataTableColumn } from "../../components/ui/DataTable";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getProjectsOverview } from "../../api/projects";
 import type { ProjectOverviewRow } from "../../types/entities";
 
@@ -26,6 +27,9 @@ function formatMoney(value: number | null, currency: string | null) {
 export function ProjectsRegistryPage() {
   const navigate = useNavigate();
   const toast = useToast();
+  const user = useAuth();
+  const isAdmin = user.role === "Admin";
+  const isReadOnly = user.role === "Executive";
   const [rows, setRows] = useState<ProjectOverviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<number | null>(null);
@@ -56,7 +60,7 @@ export function ProjectsRegistryPage() {
       header: "Action",
       render: (r) => (
         <Link to={`/projects/${r.id}/edit`} onClick={(e) => e.stopPropagation()} className="text-sm font-semibold text-brand-cyan hover:underline">
-          Edit
+          {isReadOnly ? "View" : "Edit"}
         </Link>
       ),
     },
@@ -65,10 +69,9 @@ export function ProjectsRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Projects"
         title="Projects"
         subtitle="Delivery engagements and purchase-order tracking."
-        actions={<Button onClick={() => navigate("/projects/new")}>+ New Project</Button>}
+        actions={isAdmin && <Button onClick={() => navigate("/projects/new")}>+ New Project</Button>}
       />
 
       <DataTable
@@ -114,9 +117,11 @@ export function ProjectsRegistryPage() {
           <Card
             title="Delivery & Purchase Order"
             actions={
-              <Link to={`/activities/new?record_type=Project&linked_record_id=${expanded.id}`}>
-                <Button variant="outline">Log Activity</Button>
-              </Link>
+              !isReadOnly && (
+                <Link to={`/activities/new?record_type=Project&linked_record_id=${expanded.id}`}>
+                  <Button variant="outline">Log Activity</Button>
+                </Link>
+              )
             }
           >
             <div className="flex flex-col gap-2 text-sm">

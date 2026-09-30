@@ -10,6 +10,7 @@ import { SearchableSelect, type SearchableOption } from "../../components/ui/Sea
 import { MultiSelect } from "../../components/ui/MultiSelect";
 import { Button } from "../../components/ui/Button";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getLookups } from "../../api/lookups";
 import { getProject, saveProject } from "../../api/projects";
 import type { Lookups, ProjectFormIn } from "../../types/entities";
@@ -40,6 +41,7 @@ export function ProjectFormPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
 
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [form, setForm] = useState<ProjectFormIn>(EMPTY_FORM);
@@ -141,7 +143,7 @@ export function ProjectFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Projects" title="Loading…" />
+        <PageHeader title="Loading…" />
       </AppLayout>
     );
   }
@@ -149,7 +151,6 @@ export function ProjectFormPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Projects"
         title={isEdit ? "Edit Project" : "New Project"}
         subtitle="Delivery engagement, typically created automatically when an Opportunity is marked Closed Won."
         actions={
@@ -157,8 +158,8 @@ export function ProjectFormPage() {
             <Button variant="outline" onClick={() => navigate("/projects")}>
               Cancel
             </Button>
-            <Button onClick={onSave} disabled={saving}>
-              {saving ? "Saving…" : "Save Project"}
+            <Button onClick={onSave} disabled={saving || isReadOnly}>
+              {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Project"}
             </Button>
           </>
         }

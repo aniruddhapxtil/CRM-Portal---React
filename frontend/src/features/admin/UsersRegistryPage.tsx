@@ -57,7 +57,6 @@ export function UsersRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Admin"
         title="Users"
         subtitle="People with sign-in access to the CRM."
         actions={<Button onClick={() => navigate("/admin/users/new")}>+ New User</Button>}

@@ -9,6 +9,7 @@ import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { SearchableSelect, type SearchableOption } from "../../components/ui/SearchableSelect";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getSubsidiary, saveSubsidiary } from "../../api/subsidiaries";
 import { getLookups } from "../../api/lookups";
 import { REGION_OPTIONS, INDUSTRY_OPTIONS } from "../../constants/options";
@@ -29,6 +30,7 @@ export function SubsidiaryFormPage() {
   const isEdit = Boolean(id);
   const navigate = useNavigate();
   const toast = useToast();
+  const isReadOnly = useAuth().role === "Executive";
 
   const [form, setForm] = useState<SubsidiaryFormIn>(BLANK);
   const [lookups, setLookups] = useState<Lookups | null>(null);
@@ -98,7 +100,7 @@ export function SubsidiaryFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Subsidiaries" title="Loading…" />
+        <PageHeader title="Loading…" />
       </AppLayout>
     );
   }
@@ -107,7 +109,6 @@ export function SubsidiaryFormPage() {
     <AppLayout>
       <form onSubmit={onSubmit}>
         <PageHeader
-          crumb="Subsidiaries"
           title={isEdit ? "Edit Subsidiary" : "New Subsidiary"}
           subtitle="Branch or division under a parent account."
           actions={
@@ -115,8 +116,8 @@ export function SubsidiaryFormPage() {
               <Button type="button" variant="outline" onClick={() => navigate("/subsidiaries")}>
                 Cancel
               </Button>
-              <Button type="submit" disabled={saving || nameMissing || accountMissing}>
-                {saving ? "Saving…" : "Save Subsidiary"}
+              <Button type="submit" disabled={saving || nameMissing || accountMissing || isReadOnly}>
+                {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Subsidiary"}
               </Button>
             </>
           }

@@ -8,8 +8,11 @@ import { Button } from "../../components/ui/Button";
 import { Select } from "../../components/ui/Select";
 import { Card } from "../../components/ui/Card";
 import { getOpportunitiesOverview } from "../../api/opportunities";
+import { requestOpportunityQualification } from "../../api/qualifications";
 import { SERVICE_LINE_OPTIONS, OPPORTUNITY_STAGE_WON, OPPORTUNITY_STAGE_LOST } from "../../constants/options";
 import type { OpportunityOverviewRow } from "../../types/entities";
+import { useAuth } from "../../context/AuthContext";
+import { useToast } from "../../components/ui/Toast";
 
 function probabilityTone(prob: number): "success" | "danger" | "warning" | "brand" {
   if (prob >= 100) return "success";
@@ -20,10 +23,24 @@ function probabilityTone(prob: number): "success" | "danger" | "warning" | "bran
 
 export function OpportunityRegistryPage() {
   const navigate = useNavigate();
+  const user = useAuth();
+  const toast = useToast();
+  const isSalesRep = user.role === "Sales Representative";
+  const isReadOnly = user.role === "Executive";
+  const canRequestProjectQualification = user.role === "Team Lead" || user.role === "Admin";
   const [rows, setRows] = useState<OpportunityOverviewRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [serviceLineFilter, setServiceLineFilter] = useState("");
   const [selected, setSelected] = useState<OpportunityOverviewRow | null>(null);
+
+  async function onRequestQualification(opportunityId: number) {
+    try {
+      await requestOpportunityQualification(opportunityId);
+      toast.show("Qualification requested — sent to Admin for approval.", "success");
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : "Failed to request qualification.", "danger");
+    }
+  }
 
   useEffect(() => {
     getOpportunitiesOverview()
@@ -64,9 +81,22 @@ export function OpportunityRegistryPage() {
       key: "action",
       header: "Action",
       render: (r) => (
-        <Button variant="outline" onClick={(e) => { e.stopPropagation(); navigate(`/opportunities/${r.id}/edit`); }}>
-          Edit
-        </Button>
+        <div className="flex gap-2">
+          <Button variant="outline" onClick={(e) => { e.stopPropagation(); navigate(`/opportunities/${r.id}/edit`); }}>
+            {isReadOnly ? "View" : "Edit"}
+          </Button>
+          {canRequestProjectQualification && r.stage === OPPORTUNITY_STAGE_WON && (
+            <Button
+              variant="outline"
+              onClick={(e) => {
+                e.stopPropagation();
+                onRequestQualification(r.id);
+              }}
+            >
+              Request Qualification
+            </Button>
+          )}
+        </div>
       ),
     },
   ];
@@ -74,10 +104,9 @@ export function OpportunityRegistryPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Opportunities"
         title="Opportunities"
         subtitle="Commercial deals in active pipeline, tracked through to Closed Won or Closed Lost."
-        actions={<Button onClick={() => navigate("/opportunities/new")}>+ New Opportunity</Button>}
+        actions={!isSalesRep && !isReadOnly && <Button onClick={() => navigate("/opportunities/new")}>+ New Opportunity</Button>}
       />
 
       <DataTable
@@ -114,7 +143,7 @@ export function OpportunityRegistryPage() {
                 <div className="flex justify-between"><span className="text-muted">Originating Lead</span><span>{selected.lead_name}</span></div>
               )}
               {selected.stage === OPPORTUNITY_STAGE_WON && (
-                <Badge tone="success">Delivered as Project</Badge>
+                <Badge tone="warning">Closed Won — Project qualification may be pending</Badge>
               )}
             </div>
           </Card>
@@ -143,12 +172,14 @@ export function OpportunityRegistryPage() {
           <Card
             title="Linked Activities"
             actions={
-              <Button
-                variant="outline"
-                onClick={() => navigate(`/activities/new?record_type=Opportunity&linked_record_id=${selected.id}`)}
-              >
-                Log Activity
-              </Button>
+              !isReadOnly && (
+                <Button
+                  variant="outline"
+                  onClick={() => navigate(`/activities/new?record_type=Opportunity&linked_record_id=${selected.id}`)}
+                >
+                  Log Activity
+                </Button>
+              )
             }
           >
             <div className="flex flex-col gap-2 text-sm">

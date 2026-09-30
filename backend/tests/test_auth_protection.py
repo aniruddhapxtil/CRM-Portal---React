@@ -69,7 +69,7 @@ def test_unknown_api_path_is_a_real_404_when_signed_in(signed_in):
 # ---------- session ----------
 def test_signed_in_user_is_reported_by_auth_me(signed_in):
     body = signed_in.get("/auth/me").json()
-    assert body["email"] == "rep@dataphi.demo" and body["role"] == "Sales Rep" and body["mode"] == "demo"
+    assert body["email"] == "rep@dataphi.demo" and body["role"] == "Sales Representative" and body["mode"] == "demo"
 
 
 def test_landing_page_after_login_is_the_voice_station(browser):

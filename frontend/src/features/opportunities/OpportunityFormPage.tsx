@@ -11,7 +11,9 @@ import { SearchableSelect, type SearchableOption } from "../../components/ui/Sea
 import { MultiSelect } from "../../components/ui/MultiSelect";
 import { StageTrack } from "../../components/ui/StageTrack";
 import { useToast } from "../../components/ui/Toast";
+import { useAuth } from "../../context/AuthContext";
 import { getOpportunity, saveOpportunity } from "../../api/opportunities";
+import { requestOpportunityQualification } from "../../api/qualifications";
 import { getLead } from "../../api/leads";
 import { getLookups } from "../../api/lookups";
 import {
@@ -62,12 +64,28 @@ export function OpportunityFormPage() {
   const navigate = useNavigate();
   const [searchParams] = useSearchParams();
   const toast = useToast();
+  const user = useAuth();
+  const isReadOnly = user.role === "Executive";
 
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [form, setForm] = useState<OpportunityFormIn>(EMPTY);
   const [meta, setMeta] = useState<{ recordId?: number }>({});
   const [saving, setSaving] = useState(false);
   const [loading, setLoading] = useState(true);
+  const [requestingQual, setRequestingQual] = useState(false);
+
+  async function onRequestQualification() {
+    if (!id) return;
+    setRequestingQual(true);
+    try {
+      await requestOpportunityQualification(Number(id));
+      toast.show("Qualification requested — sent to Admin for approval.", "success");
+    } catch (err) {
+      toast.show(err instanceof Error ? err.message : "Failed to request qualification.", "danger");
+    } finally {
+      setRequestingQual(false);
+    }
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -147,6 +165,7 @@ export function OpportunityFormPage() {
   const accountValid = Boolean(form.account_id);
   const contactValid = Boolean(form.contact_id);
   const isLost = form.stage === OPPORTUNITY_STAGE_LOST;
+  const isWon = form.stage === OPPORTUNITY_STAGE_WON;
   const reasonValid = !isLost || Boolean(form.reason);
   const canSave = accountValid && contactValid && form.opportunity_name.trim().length > 0 && reasonValid;
 
@@ -165,12 +184,7 @@ export function OpportunityFormPage() {
       const payload: OpportunityFormIn = { ...form, opportunity_id: isEdit && id ? Number(id) : null };
       const res = await saveOpportunity(payload);
       toast.show(isEdit ? "Opportunity updated." : "Opportunity created.", "success");
-      if (res.project_id) {
-        toast.show("Closed Won — a delivery Project was created automatically.", "brand");
-        navigate(`/projects/${res.project_id}/edit`, { replace: true });
-      } else {
-        navigate(`/opportunities/${res.opportunity_id}/edit`, { replace: true });
-      }
+      navigate(`/opportunities/${res.opportunity_id}/edit`, { replace: true });
     } catch (err) {
       toast.show(err instanceof Error ? err.message : "Failed to save opportunity.", "danger");
     } finally {
@@ -181,7 +195,7 @@ export function OpportunityFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Opportunities" title={isEdit ? "Edit Opportunity" : "New Opportunity"} />
+        <PageHeader title={isEdit ? "Edit Opportunity" : "New Opportunity"} />
         <div className="p-12 text-center text-sm text-muted">Loading…</div>
       </AppLayout>
     );
@@ -190,14 +204,13 @@ export function OpportunityFormPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Opportunities"
         title={isEdit ? "Edit Opportunity" : "New Opportunity"}
         subtitle="Commercial deal tracked through the pipeline to Closed Won or Closed Lost."
         actions={
           <>
             <Button variant="outline" onClick={() => navigate("/opportunities")}>Cancel</Button>
-            <Button onClick={handleSave} disabled={!canSave || saving}>
-              {saving ? "Saving…" : "Save Opportunity"}
+            <Button onClick={handleSave} disabled={!canSave || saving || isReadOnly}>
+              {saving ? "Saving…" : isReadOnly ? "Read-only" : "Save Opportunity"}
             </Button>
           </>
         }
@@ -246,6 +259,11 @@ export function OpportunityFormPage() {
                   value={form.reason ?? ""}
                   onChange={(e) => set("reason", e.target.value)}
                 />
+              </div>
+            )}
+            {isWon && (
+              <div className="mt-4 rounded-lg border border-brand/30 bg-brand-tint/50 p-3 text-xs text-ink">
+                A Team Lead can now request Project qualification from Admin — the delivery Project is created once approved.
               </div>
             )}
           </Card>
@@ -397,7 +415,15 @@ export function OpportunityFormPage() {
           recordId={meta.recordId ? `OPP-${meta.recordId}` : undefined}
           attributes={form.attributes}
           onAttributesChange={(v) => set("attributes", v)}
-        />
+        >
+          {isEdit && isWon && (user.role === "Team Lead" || user.role === "Admin") && (
+            <Card title="Qualification">
+              <Button className="w-full" onClick={onRequestQualification} disabled={requestingQual}>
+                {requestingQual ? "Requesting…" : "Request Qualification"}
+              </Button>
+            </Card>
+          )}
+        </Sidebar>
       </div>
     </AppLayout>
   );

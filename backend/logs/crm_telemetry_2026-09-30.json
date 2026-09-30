@@ -1,0 +1,29 @@
+[
+  {
+    "timestamp": "2026-09-30T16:07:53.438040",
+    "draft_id": 17,
+    "intent": "create_account",
+    "transcript": "Create an account for Audi. The account manager is Mr. Bins and the region of operation is Abu Dhabi.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1808,
+        "output_tokens": 108,
+        "total_tokens": 1916
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.004696,
+        "details": {
+          "audio_duration_sec": 8.28,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1417,
+        "llm_ms": 4506,
+        "backend_total_ms": 6177
+      }
+    }
+  }
+]

@@ -17,7 +17,7 @@ const BLANK: CrmUserFormIn = {
   designation: "",
   region: "",
   phone: "",
-  role: "Sales Rep",
+  role: "Sales Representative",
 };
 
 export function UserFormPage() {
@@ -44,7 +44,7 @@ export function UserFormPage() {
           designation: u.designation ?? "",
           region: u.region ?? "",
           phone: u.phone ?? "",
-          role: u.role ?? "Sales Rep",
+          role: u.role ?? "Sales Representative",
         });
       })
       .catch(() => toast.show("Failed to load user.", "danger"))
@@ -81,7 +81,7 @@ export function UserFormPage() {
   if (loading) {
     return (
       <AppLayout>
-        <PageHeader crumb="Admin" title="Loading…" />
+        <PageHeader title="Loading…" />
       </AppLayout>
     );
   }
@@ -89,7 +89,6 @@ export function UserFormPage() {
   return (
     <AppLayout>
       <PageHeader
-        crumb="Admin"
         title={isEdit ? "Edit User" : "New User"}
         subtitle="Add someone to the CRM and grant them sign-in access."
         actions={

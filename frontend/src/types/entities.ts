@@ -228,8 +228,20 @@ export interface OpportunityFormIn extends WithAttributes {
 export interface OpportunitySaveResponse {
   status: string;
   opportunity_id: number;
-  /** Non-null when saving flips stage to "Closed Won (100%)" — backend auto-creates a Project. */
-  project_id: number | null;
+}
+
+export interface QualificationRequestRow {
+  id: number;
+  request_type: "lead_qualification" | "opportunity_qualification";
+  linked_label: string | null;
+  lead_id: number | null;
+  opportunity_id: number | null;
+  status: "Pending" | "Approved" | "Revoked";
+  requested_by_name: string | null;
+  requested_at: string | null;
+  decided_at: string | null;
+  /** False for opportunity_qualification rows unless the viewer is Admin — Team Lead can see but not act. */
+  can_approve: boolean;
 }
 
 // ---------- Project ----------
@@ -295,6 +307,9 @@ export interface Activity extends WithAttributes {
 
 export interface ActivityOverviewRow extends Omit<Activity, "attributes"> {
   linked_label: string;
+  /** True for backend-only audit-log rows (record_type resolves to the entity that actually
+   * changed, e.g. "Lead"/"Opportunity") — these have no Activity form of their own to edit. */
+  is_system: boolean;
 }
 
 export interface ActivityFormIn extends WithAttributes {
