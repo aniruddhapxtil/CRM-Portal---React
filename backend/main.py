@@ -505,6 +505,14 @@ def log_system_activity(
     ))
 
 
+def stamp_audit(obj, user_id: int | None, is_new: bool) -> None:
+    """Fills created_by (new rows only) and updated_by (every write) for tables that carry them."""
+    if is_new and hasattr(obj, "created_by"):
+        obj.created_by = user_id
+    if hasattr(obj, "updated_by"):
+        obj.updated_by = user_id
+
+
 def require_write_access(user: dict) -> None:
     """Executive is a read-only role — full visibility, zero create/edit rights anywhere."""
     if user["role"] == "Executive":
@@ -1382,6 +1390,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             region=payload.account.region,
             industry=payload.account.industry,
             created_by=user_id,
+            updated_by=user_id,
         )
         db.add(account)
         db.flush()
@@ -1392,6 +1401,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             account.region = payload.account.region
         if payload.account.industry and not account.industry:
             account.industry = payload.account.industry
+        stamp_audit(account, user_id, False)
 
     if payload.intent == "create_account":
         activity = Activity(
@@ -1429,6 +1439,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
                 region=payload.subsidiary.region or account.region,
                 industry=payload.subsidiary.industry or account.industry,
                 created_by=user_id,
+                updated_by=user_id,
             )
             db.add(subsidiary)
             db.flush()
@@ -1454,6 +1465,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             linkedin_url=payload.contact.linkedin_url,
             notes=payload.contact.notes,
             created_by=user_id,
+            updated_by=user_id,
         )
         db.add(contact)
         db.flush()
@@ -1464,6 +1476,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             contact.mobile = payload.contact.mobile
         if payload.contact.email and not contact.email:
             contact.email = payload.contact.email
+        stamp_audit(contact, user_id, False)
 
     if payload.intent == "create_contact":
         activity = Activity(
@@ -1517,6 +1530,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             closure_date=payload.opportunity.closure_date or payload.lead.closure_date,
             notes=payload.opportunity.notes or payload.lead.notes or "Auto-backfilled via confirmed opportunity creation",
             created_by=user_id,
+            updated_by=user_id,
         )
         db.add(backfilled_lead)
         db.flush()
@@ -1539,6 +1553,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             closure_date=payload.opportunity.closure_date or payload.lead.closure_date,
             notes=payload.opportunity.notes or payload.lead.notes,
             created_by=user_id,
+            updated_by=user_id,
         )
         db.add(opportunity)
         db.flush()
@@ -1601,6 +1616,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
         closure_date=payload.lead.closure_date,
         notes=payload.lead.notes,
         created_by=user_id,
+        updated_by=user_id,
     )
     db.add(lead)
     db.flush()
@@ -2403,6 +2419,7 @@ def save_account_form(data: AccountFormIn, user: dict = Depends(get_current_user
     account.website = data.website
     account.notes = data.notes
     apply_attributes(account, data.attributes)
+    stamp_audit(account, user["uid"], is_new)
     db.flush()
 
     if is_new:
@@ -2422,6 +2439,7 @@ def save_subsidiary_form(data: SubsidiaryFormIn, user: dict = Depends(get_curren
     if data.subsidiary_id:
         sub = db.scalar(select(Subsidiary).where(Subsidiary.id == data.subsidiary_id))
 
+    is_new = sub is None
     if not sub:
         sub = Subsidiary(account_id=data.account_id, subsidiary_name=data.subsidiary_name)
         db.add(sub)
@@ -2432,6 +2450,7 @@ def save_subsidiary_form(data: SubsidiaryFormIn, user: dict = Depends(get_curren
     sub.industry = data.industry
     sub.notes = data.notes
     apply_attributes(sub, data.attributes)
+    stamp_audit(sub, user["uid"], is_new)
 
     db.commit()
     db.refresh(sub)
@@ -2465,6 +2484,7 @@ def save_contact_form(data: ContactFormIn, user: dict = Depends(get_current_user
     contact.linkedin_url = data.linkedin_url
     contact.notes = data.notes
     apply_attributes(contact, data.attributes)
+    stamp_audit(contact, user["uid"], is_new)
     db.flush()
 
     if is_new:
@@ -2511,6 +2531,7 @@ def save_lead_form(data: LeadFormIn, user: dict = Depends(get_current_user), db:
     lead.next_action_date = data.next_action_date
     lead.notes = data.notes
     apply_attributes(lead, data.attributes)
+    stamp_audit(lead, user["uid"], is_new)
     db.flush()
 
     if is_new:
@@ -2592,6 +2613,7 @@ def save_opportunity_form(data: OpportunityFormIn, user: dict = Depends(get_curr
         opp.notes = data.notes
 
     apply_attributes(opp, data.attributes)
+    stamp_audit(opp, user["uid"], is_new)
 
     db.flush()
 
@@ -2659,6 +2681,7 @@ def save_project_form(data: ProjectFormIn, user: dict = Depends(get_current_user
         proj.notes = data.notes
 
     apply_attributes(proj, data.attributes)
+    stamp_audit(proj, user["uid"], is_new)
     db.flush()
 
     new_stage = data.po_status or "Awaited"
@@ -2682,6 +2705,7 @@ def save_activity_form(data: ActivityFormIn, user: dict = Depends(get_current_us
     if data.activity_id:
         act = db.scalar(select(Activity).where(Activity.id == data.activity_id))
 
+    is_new = act is None
     if not act:
         act = Activity(activity_name=data.activity_name, record_type=data.record_type)
         db.add(act)
@@ -2693,6 +2717,7 @@ def save_activity_form(data: ActivityFormIn, user: dict = Depends(get_current_us
     act.next_step = data.next_step
     act.next_action_date = resolve_relative_date(data.next_action_date)
     apply_attributes(act, data.attributes)
+    stamp_audit(act, user["uid"], is_new)
 
     act.account_id = None
     act.subsidiary_id = None
@@ -2922,6 +2947,7 @@ def _approve_lead_qualification(req: "QualificationRequest", db: Session, user_i
         notes=lead.notes,
     )
     apply_attributes(opp, pack_attributes(lead))
+    stamp_audit(opp, user_id, True)
     db.add(opp)
     db.flush()
     log_system_activity(
@@ -2946,6 +2972,7 @@ def _approve_opportunity_qualification(req: "QualificationRequest", db: Session,
         currency=opp.currency,
         stage="Awaited",
     )
+    stamp_audit(proj, user_id, True)
     db.add(proj)
     db.flush()
     log_system_activity(
@@ -3089,11 +3116,12 @@ def get_voice_drafts(db: Session = Depends(get_db)):
 @app.post("/api/voice/process", dependencies=REQUIRE_LOGIN)
 async def process_voice(
     audio: UploadFile = File(...),
-    user_id: int | None = Form(None),
     user_email: str | None = Form(None),
     user_phone: str | None = Form(None),
+    user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
+    user_id = user["uid"]
     if not audio.content_type or not audio.content_type.startswith("audio/"):
         raise HTTPException(400, "Please upload a valid audio recording.")
 
@@ -3315,8 +3343,9 @@ async def resume_voice_draft(
 
 
 @app.post("/api/voice/commit", dependencies=REQUIRE_LOGIN)
-async def commit_voice_records(payload: ConfirmedCommitPayload, db: Session = Depends(get_db)):
+async def commit_voice_records(payload: ConfirmedCommitPayload, user: dict = Depends(get_current_user), db: Session = Depends(get_db)):
     started = time.perf_counter()
+    payload.user_id = user["uid"]  # always the signed-in user, never client-supplied
 
     if payload.intent in ["create_lead", "create_opportunity"]:
         if not payload.account.account_name:
