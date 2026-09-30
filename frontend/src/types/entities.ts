@@ -420,3 +420,126 @@ export interface CrmUserFormIn {
   phone?: string | null;
   role: string;
 }
+
+// ---------- Dashboard (Home) ----------
+// Mirrors backend/main.py's get_dashboard_summary() response exactly.
+
+export type DashboardPeriod = "mtd" | "qtd" | "ytd" | "all";
+
+export interface CurrencyAmount {
+  currency: string;
+  amount: number;
+}
+
+export interface DashboardFunnelStage {
+  stage: string;
+  count: number;
+  amounts: CurrencyAmount[];
+  conversion_pct: number | null;
+}
+
+export interface DashboardPipelineByType {
+  type: string;
+  amounts: CurrencyAmount[];
+}
+
+export interface DashboardForecastMonth {
+  month: string;
+  label: string;
+  weighted_amounts: CurrencyAmount[];
+  deal_count: number;
+}
+
+export interface DashboardDealTrackingRow {
+  id: number;
+  opportunity_name: string;
+  account_name: string;
+  stage: string;
+  deal_size: number;
+  currency: string;
+  expected_closure_date: string | null;
+}
+
+export interface DashboardLeadSourceSlice {
+  source: string;
+  count: number;
+  pct: number;
+}
+
+export interface DashboardTrendMonth {
+  month: string;
+  label: string;
+  amounts: CurrencyAmount[];
+}
+
+export interface DashboardNeedsAttentionRow {
+  id: number;
+  opportunity_name: string;
+  account_name: string;
+  stage: string;
+  days_idle: number;
+}
+
+export interface DashboardActivityItem {
+  id: number;
+  activity_name: string;
+  record_action: string | null;
+  linked_name: string;
+  actor: string;
+  activity_date: string;
+}
+
+export interface ForecastGridCell {
+  id: number;
+  opportunity_name: string;
+  deal_size: number;
+  currency: string;
+  probability: number;
+  stage_label: string;
+  expected_closure_date: string | null;
+}
+
+export interface ForecastGridRow {
+  manager_name: string;
+  total_amounts: CurrencyAmount[];
+  cells: Record<string, ForecastGridCell[]>;
+}
+
+export interface ForecastGrid {
+  months: { key: string; label: string }[];
+  quarters: { label: string; span: number }[];
+  rows: ForecastGridRow[];
+  month_totals: Record<string, CurrencyAmount[]>;
+}
+
+export interface DashboardSummary {
+  period: { key: DashboardPeriod; start: string | null; end: string };
+  kpis: {
+    open_pipeline: CurrencyAmount[];
+    weighted_pipeline: CurrencyAmount[];
+    closed_won: CurrencyAmount[];
+    closed_lost: CurrencyAmount[];
+    open_deal_count: number;
+    open_lead_count: number;
+    projects_in_delivery: number;
+    win_rate_pct: number | null;
+    avg_cycle_days: number | null;
+  };
+  funnel: DashboardFunnelStage[];
+  pipeline_by_type: DashboardPipelineByType[];
+  forecast_by_month: DashboardForecastMonth[];
+  forecast_grid: ForecastGrid;
+  pipeline_movement: {
+    opening: CurrencyAmount[];
+    new_added: CurrencyAmount[];
+    won: CurrencyAmount[];
+    lost: CurrencyAmount[];
+    closing: CurrencyAmount[];
+  };
+  deal_tracking: DashboardDealTrackingRow[];
+  lead_source_mix: DashboardLeadSourceSlice[];
+  closed_won_trend: DashboardTrendMonth[];
+  needs_attention: DashboardNeedsAttentionRow[];
+  recent_activity: DashboardActivityItem[];
+  available_account_managers: string[];
+}

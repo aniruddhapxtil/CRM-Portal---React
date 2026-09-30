@@ -1684,6 +1684,8 @@ REQUIRE_ADMIN = [Depends(require_role("Admin"))]
 # only approves lead_qualification, Executive is read-only and can view but never approve/revoke
 # (enforced per-endpoint below, not by this page-level guard).
 REQUIRE_QUALIFICATION_VIEWER = [Depends(require_role("Admin", "Team Lead", "Executive"))]
+# Home dashboard: Admin, Team Lead and Executive only.
+REQUIRE_DASHBOARD_VIEWER = [Depends(require_role("Admin", "Team Lead", "Executive"))]
 
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
@@ -1861,6 +1863,395 @@ def health():
         "stt_model": settings().sarvam_stt_model,
         "bedrock_model": settings().bedrock_model_id,
         "timestamp": datetime.now().isoformat(),
+    }
+
+
+# =====================================================================
+# Dashboard (Home) — aggregated read-only view over Leads/Opportunities.
+# Everything here is computed live from the same tables the registry pages
+# write to; there is no separate "dashboard data" stored anywhere.
+# =====================================================================
+
+DASHBOARD_PERIODS = {"mtd", "qtd", "ytd", "all"}
+# Must byte-for-byte match frontend/src/constants/options.ts (em-dash, not hyphen).
+DASHBOARD_OPP_STAGE_TRACK = ["Discovery — 40%", "Tech Discussion — 60%", "Proposal — 80%"]
+DASHBOARD_OPP_STAGE_WON = "Closed Won (100%)"
+DASHBOARD_OPP_STAGE_LOST = "Closed Lost (0%)"
+
+
+def _dashboard_period_start(period: str) -> date | None:
+    today = date.today()
+    if period == "mtd":
+        return today.replace(day=1)
+    if period == "qtd":
+        quarter_start_month = ((today.month - 1) // 3) * 3 + 1
+        return date(today.year, quarter_start_month, 1)
+    if period == "ytd":
+        return date(today.year, 1, 1)
+    return None  # "all" — no lower bound
+
+
+def _dashboard_in_period(d: date | None, start: date | None) -> bool:
+    if start is None:
+        return True
+    if d is None:
+        return False
+    return d >= start
+
+
+def _dashboard_group_by_currency(items: list[tuple[str, Decimal]]) -> list[dict]:
+    totals: dict[str, Decimal] = {}
+    for currency, amount in items:
+        totals[currency] = totals.get(currency, Decimal(0)) + amount
+    return [
+        {"currency": c, "amount": float(a)}
+        for c, a in sorted(totals.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+
+@app.get("/api/dashboard/summary", dependencies=REQUIRE_DASHBOARD_VIEWER)
+def get_dashboard_summary(
+    db: Session = Depends(get_db),
+    period: str = Query("qtd"),
+    account_manager: str | None = Query(None),
+    region: str | None = Query(None),
+    source: str | None = Query(None),
+    project_type: str | None = Query(None),
+):
+    if period not in DASHBOARD_PERIODS:
+        raise HTTPException(status_code=400, detail=f"period must be one of: {', '.join(sorted(DASHBOARD_PERIODS))}")
+    period_start = _dashboard_period_start(period)
+    today = date.today()
+
+    all_leads = db.scalars(select(Lead).options(selectinload(Lead.account))).all()
+    all_opps = db.scalars(select(Opportunity).options(selectinload(Opportunity.account))).all()
+
+    available_account_managers = sorted({
+        m for m in (
+            [l.account_manager for l in all_leads] + [o.account_manager for o in all_opps]
+        ) if m
+    })
+
+    def lead_matches(l: Lead) -> bool:
+        if account_manager and l.account_manager != account_manager:
+            return False
+        if region and (not l.account or l.account.region != region):
+            return False
+        if source and l.lead_source != source:
+            return False
+        if project_type and l.project_type != project_type:
+            return False
+        return True
+
+    def opp_matches(o: Opportunity) -> bool:
+        if account_manager and o.account_manager != account_manager:
+            return False
+        if region and (not o.account or o.account.region != region):
+            return False
+        if source and o.opportunity_source != source:
+            return False
+        if project_type and o.project_type != project_type:
+            return False
+        return True
+
+    leads = [l for l in all_leads if lead_matches(l)]
+    opps = [o for o in all_opps if opp_matches(o)]
+
+    def deal_size(x) -> Decimal:
+        return x.deal_size if x.deal_size is not None else Decimal(0)
+
+    def opp_currency(x) -> str:
+        return x.currency or "AED"
+
+    def is_open(o: Opportunity) -> bool:
+        return o.stage not in (DASHBOARD_OPP_STAGE_WON, DASHBOARD_OPP_STAGE_LOST)
+
+    open_opps = [o for o in opps if is_open(o)]
+    won_opps = [o for o in opps if o.stage == DASHBOARD_OPP_STAGE_WON]
+    lost_opps = [o for o in opps if o.stage == DASHBOARD_OPP_STAGE_LOST]
+
+    # ---- KPIs. Open/weighted pipeline are a live snapshot (not period-bound); ----
+    # ---- Closed Won/Lost, win rate and cycle time are bound to the selected period. ----
+    open_pipeline = _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in open_opps])
+    weighted_pipeline = _dashboard_group_by_currency(
+        [(opp_currency(o), deal_size(o) * Decimal(o.probability or 0) / Decimal(100)) for o in open_opps]
+    )
+    won_in_period = [o for o in won_opps if _dashboard_in_period(o.closure_date or o.creation_date.date(), period_start)]
+    lost_in_period = [o for o in lost_opps if _dashboard_in_period(o.closure_date or o.creation_date.date(), period_start)]
+    closed_won_value = _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in won_in_period])
+    closed_lost_value = _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in lost_in_period])
+    win_rate_pct = (
+        round(len(won_in_period) / (len(won_in_period) + len(lost_in_period)) * 100, 1)
+        if (won_in_period or lost_in_period) else None
+    )
+    cycle_days = [(o.closure_date - o.creation_date.date()).days for o in won_in_period if o.closure_date]
+    avg_cycle_days = round(sum(cycle_days) / len(cycle_days), 1) if cycle_days else None
+    open_lead_count = sum(1 for l in leads if l.stage == "Qualified")
+
+    all_projects = db.scalars(select(Project).options(selectinload(Project.account))).all()
+    if region:
+        all_projects = [p for p in all_projects if p.account and p.account.region == region]
+    projects_in_delivery = sum(1 for p in all_projects if p.stage not in ("Closed", "Cancelled"))
+
+    kpis = {
+        "open_pipeline": open_pipeline,
+        "weighted_pipeline": weighted_pipeline,
+        "closed_won": closed_won_value,
+        "closed_lost": closed_lost_value,
+        "open_deal_count": len(open_opps),
+        "open_lead_count": open_lead_count,
+        "projects_in_delivery": projects_in_delivery,
+        "win_rate_pct": win_rate_pct,
+        "avg_cycle_days": avg_cycle_days,
+    }
+
+    # ---- Sales funnel: cohort of leads/opportunities *created* within the period, ----
+    # ---- bucketed by their *current* stage (this is a distribution, not a strict lineage). ----
+    leads_in_period = [l for l in leads if _dashboard_in_period(l.creation_date.date(), period_start)]
+    opps_in_period = [o for o in opps if _dashboard_in_period(o.creation_date.date(), period_start)]
+    qualified_leads = [l for l in leads_in_period if l.stage == "Qualified"]
+
+    funnel_buckets: list[tuple[str, list]] = [("Qualified Leads", qualified_leads)]
+    for stage_name in DASHBOARD_OPP_STAGE_TRACK:
+        funnel_buckets.append((stage_name, [o for o in opps_in_period if o.stage == stage_name]))
+    funnel_buckets.append((DASHBOARD_OPP_STAGE_WON, [o for o in opps_in_period if o.stage == DASHBOARD_OPP_STAGE_WON]))
+    funnel_buckets.append((DASHBOARD_OPP_STAGE_LOST, [o for o in opps_in_period if o.stage == DASHBOARD_OPP_STAGE_LOST]))
+
+    funnel = []
+    prev_count: int | None = None
+    for label, records in funnel_buckets:
+        count = len(records)
+        amounts = _dashboard_group_by_currency(
+            [(r.currency or "AED", deal_size(r)) for r in records]
+        )
+        conversion_pct = round(count / prev_count * 100, 1) if prev_count else None
+        funnel.append({"stage": label, "count": count, "amounts": amounts, "conversion_pct": conversion_pct})
+        prev_count = count
+
+    # ---- Open pipeline by engagement/contract type ----
+    by_type: dict[str, list[Opportunity]] = {}
+    for o in open_opps:
+        by_type.setdefault(o.project_type or "Other", []).append(o)
+    pipeline_by_type = [
+        {"type": t, "amounts": _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in items])}
+        for t, items in sorted(by_type.items())
+    ]
+
+    # ---- Weighted forecast for the next 6 months by expected closure date ----
+    forecast_by_month = []
+    y, m = today.year, today.month
+    for i in range(6):
+        mm = (m - 1 + i) % 12 + 1
+        yy = y + (m - 1 + i) // 12
+        bucket = [
+            o for o in open_opps
+            if o.expected_closure_date and o.expected_closure_date.year == yy and o.expected_closure_date.month == mm
+        ]
+        weighted = _dashboard_group_by_currency(
+            [(opp_currency(o), deal_size(o) * Decimal(o.probability or 0) / Decimal(100)) for o in bucket]
+        )
+        forecast_by_month.append({
+            "month": f"{yy}-{mm:02d}",
+            "label": f"{date(yy, mm, 1).strftime('%b')} '{str(yy)[2:]}",
+            "weighted_amounts": weighted,
+            "deal_count": len(bucket),
+        })
+
+    # ---- Monthly Deal Tracker: open opportunities by Account Manager (rows) x Month (columns), ----
+    # ---- months grouped into quarter header spans — a spreadsheet-style forecast view. ----
+    def _short_stage_label(stage: str) -> str:
+        if stage.startswith("Discovery"):
+            return "Discovery"
+        if stage.startswith("Tech Discussion"):
+            return "Tech Disc."
+        if stage.startswith("Proposal"):
+            return "Proposal"
+        if stage == DASHBOARD_OPP_STAGE_WON:
+            return "Won"
+        if stage == DASHBOARD_OPP_STAGE_LOST:
+            return "Lost"
+        return stage
+
+    grid_months = [(y + (m - 1 + i) // 12, (m - 1 + i) % 12 + 1) for i in range(6)]
+    grid_month_keys = [f"{yy}-{mm:02d}" for yy, mm in grid_months]
+    grid_quarters = []
+    for yy, mm in grid_months:
+        q_label = f"Q{(mm - 1) // 3 + 1} {yy}"
+        if grid_quarters and grid_quarters[-1]["label"] == q_label:
+            grid_quarters[-1]["span"] += 1
+        else:
+            grid_quarters.append({"label": q_label, "span": 1})
+
+    by_manager: dict[str, dict[str, list[Opportunity]]] = {}
+    for o in open_opps:
+        if not o.expected_closure_date:
+            continue
+        key = f"{o.expected_closure_date.year}-{o.expected_closure_date.month:02d}"
+        if key not in grid_month_keys:
+            continue
+        mgr_name = o.account_manager or "Unassigned"
+        by_manager.setdefault(mgr_name, {}).setdefault(key, []).append(o)
+
+    grid_rows = []
+    for mgr_name, months_map in by_manager.items():
+        all_opps_for_mgr = [o for items in months_map.values() for o in items]
+        cells = {
+            key: [
+                {
+                    "id": o.id,
+                    "opportunity_name": o.opportunity_name,
+                    "deal_size": float(deal_size(o)),
+                    "currency": opp_currency(o),
+                    "probability": o.probability or 0,
+                    "stage_label": _short_stage_label(o.stage),
+                    "expected_closure_date": o.expected_closure_date.isoformat() if o.expected_closure_date else None,
+                }
+                for o in months_map.get(key, [])
+            ]
+            for key in grid_month_keys
+        }
+        grid_rows.append({
+            "manager_name": mgr_name,
+            "total_amounts": _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in all_opps_for_mgr]),
+            "cells": cells,
+        })
+    grid_rows.sort(key=lambda r: sum(a["amount"] for a in r["total_amounts"]), reverse=True)
+    grid_rows = grid_rows[:12]
+
+    grid_month_totals = {
+        key: _dashboard_group_by_currency([
+            (opp_currency(o), deal_size(o))
+            for months_map in by_manager.values()
+            for o in months_map.get(key, [])
+        ])
+        for key in grid_month_keys
+    }
+
+    forecast_grid = {
+        "months": [{"key": k, "label": lbl} for k, lbl in zip(grid_month_keys, (f["label"] for f in forecast_by_month))],
+        "quarters": grid_quarters,
+        "rows": grid_rows,
+        "month_totals": grid_month_totals,
+    }
+
+    # ---- Pipeline movement (bridge) for the selected period ----
+    opening_opps = []
+    if period_start is not None:
+        opening_opps = [
+            o for o in opps
+            if o.creation_date.date() < period_start
+            and (is_open(o) or _dashboard_in_period(o.closure_date or o.creation_date.date(), period_start))
+        ]
+    new_added_opps = [o for o in opps if _dashboard_in_period(o.creation_date.date(), period_start)]
+    pipeline_movement = {
+        "opening": _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in opening_opps]),
+        "new_added": _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in new_added_opps]),
+        "won": closed_won_value,
+        "lost": closed_lost_value,
+        "closing": open_pipeline,
+    }
+
+    # ---- Deal tracking table: open opportunities, soonest expected close first ----
+    def sort_key(o: Opportunity):
+        return (o.expected_closure_date is None, o.expected_closure_date or date.max)
+
+    deal_tracking = [
+        {
+            "id": o.id,
+            "opportunity_name": o.opportunity_name,
+            "account_name": o.account.account_name if o.account else "N/A",
+            "stage": o.stage,
+            "deal_size": float(deal_size(o)),
+            "currency": opp_currency(o),
+            "expected_closure_date": o.expected_closure_date.isoformat() if o.expected_closure_date else None,
+        }
+        for o in sorted(open_opps, key=sort_key)[:20]
+    ]
+
+    # ---- Lead source mix for this period's cohort ----
+    source_counts: dict[str, int] = {}
+    for l in leads_in_period:
+        key = l.lead_source or "Unspecified"
+        source_counts[key] = source_counts.get(key, 0) + 1
+    total_leads_in_period = sum(source_counts.values())
+    lead_source_mix = [
+        {"source": s, "count": c, "pct": round(c / total_leads_in_period * 100, 1) if total_leads_in_period else 0}
+        for s, c in sorted(source_counts.items(), key=lambda kv: kv[1], reverse=True)
+    ]
+
+    # ---- Closed Won value trend, trailing 6 calendar months ----
+    closed_won_trend = []
+    for i in range(5, -1, -1):
+        mm = (today.month - 1 - i) % 12 + 1
+        yy = today.year + (today.month - 1 - i) // 12
+        bucket = [
+            o for o in won_opps
+            if (o.closure_date or o.creation_date.date()).year == yy
+            and (o.closure_date or o.creation_date.date()).month == mm
+        ]
+        closed_won_trend.append({
+            "month": f"{yy}-{mm:02d}",
+            "label": date(yy, mm, 1).strftime("%b"),
+            "amounts": _dashboard_group_by_currency([(opp_currency(o), deal_size(o)) for o in bucket]),
+        })
+
+    # ---- Needs attention: open deals with no logged activity in 7+ days ----
+    open_opp_ids = [o.id for o in open_opps]
+    last_activity: dict[int, date] = {}
+    if open_opp_ids:
+        for a in db.scalars(select(Activity).where(Activity.opportunity_id.in_(open_opp_ids))).all():
+            d = a.activity_date.date()
+            if a.opportunity_id not in last_activity or d > last_activity[a.opportunity_id]:
+                last_activity[a.opportunity_id] = d
+
+    needs_attention = []
+    for o in open_opps:
+        reference = last_activity.get(o.id, o.creation_date.date())
+        days_idle = (today - reference).days
+        if days_idle >= 7:
+            needs_attention.append({
+                "id": o.id,
+                "opportunity_name": o.opportunity_name,
+                "account_name": o.account.account_name if o.account else "N/A",
+                "stage": o.stage,
+                "days_idle": days_idle,
+            })
+    needs_attention.sort(key=lambda x: x["days_idle"], reverse=True)
+    needs_attention = needs_attention[:6]
+
+    # ---- Recent activity feed (global, unfiltered by the panel's filters) ----
+    recent_raw = db.scalars(select(Activity).order_by(Activity.activity_date.desc()).limit(8)).all()
+    actor_ids = {a.created_by for a in recent_raw if a.created_by}
+    actor_name: dict[int, str] = {}
+    if actor_ids:
+        for u in db.scalars(select(User).where(User.id.in_(actor_ids))).all():
+            actor_name[u.id] = u.user_name
+    recent_activity = [
+        {
+            "id": a.id,
+            "activity_name": a.activity_name,
+            "record_action": a.record_action,
+            "linked_name": a.account_name or a.contact_name or a.subsidiary_name or "—",
+            "actor": actor_name.get(a.created_by, "Unknown"),
+            "activity_date": a.activity_date.strftime("%Y-%m-%d %H:%M") if a.activity_date else "N/A",
+        }
+        for a in recent_raw
+    ]
+
+    return {
+        "period": {"key": period, "start": period_start.isoformat() if period_start else None, "end": today.isoformat()},
+        "kpis": kpis,
+        "funnel": funnel,
+        "pipeline_by_type": pipeline_by_type,
+        "forecast_by_month": forecast_by_month,
+        "forecast_grid": forecast_grid,
+        "pipeline_movement": pipeline_movement,
+        "deal_tracking": deal_tracking,
+        "lead_source_mix": lead_source_mix,
+        "closed_won_trend": closed_won_trend,
+        "needs_attention": needs_attention,
+        "recent_activity": recent_activity,
+        "available_account_managers": available_account_managers,
     }
 
 
@@ -2633,6 +3024,47 @@ def save_opportunity_form(data: OpportunityFormIn, user: dict = Depends(get_curr
 
     db.commit()
     return {"status": "success", "opportunity_id": opp.id}
+
+
+class OpportunityClosureDateIn(BaseModel):
+    expected_closure_date: date | None = None
+
+    @field_validator("expected_closure_date", mode="before")
+    @classmethod
+    def parse_date(cls, v):
+        return resolve_relative_date(v)
+
+
+@app.post("/api/opportunity/{opportunity_id}/expected-closure-date", dependencies=REQUIRE_DASHBOARD_VIEWER)
+def update_opportunity_expected_closure_date(
+    opportunity_id: int,
+    data: OpportunityClosureDateIn,
+    user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    """Quick inline edit from the Home dashboard's Monthly Deal Tracker — updates only the
+    expected closure date, without requiring the full Opportunity form payload."""
+    require_write_access(user)
+    opp = db.scalar(select(Opportunity).where(Opportunity.id == opportunity_id))
+    if not opp:
+        raise HTTPException(404, "Opportunity not found")
+
+    old_date = opp.expected_closure_date
+    opp.expected_closure_date = data.expected_closure_date
+    stamp_audit(opp, user["uid"], is_new=False)
+
+    if old_date != data.expected_closure_date:
+        log_system_activity(
+            db, action=f"Expected Closure Date changed from {old_date} to {data.expected_closure_date}",
+            user_id=user["uid"], opportunity_id=opp.id, account_id=opp.account_id,
+        )
+
+    db.commit()
+    return {
+        "status": "success",
+        "opportunity_id": opp.id,
+        "expected_closure_date": opp.expected_closure_date.isoformat() if opp.expected_closure_date else None,
+    }
 
 
 @app.post("/api/project/save", dependencies=REQUIRE_LOGIN)

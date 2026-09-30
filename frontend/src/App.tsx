@@ -1,4 +1,5 @@
 import { Navigate, Route, Routes } from "react-router-dom";
+import { HomePage } from "./features/dashboard/HomePage";
 import { AccountFormPage } from "./features/accounts/AccountFormPage";
 import { AccountsRegistryPage } from "./features/accounts/AccountsRegistryPage";
 import { SubsidiaryFormPage } from "./features/subsidiaries/SubsidiaryFormPage";
@@ -23,7 +24,14 @@ import { RequireRole } from "./components/layout/RequireRole";
 export default function App() {
   return (
     <Routes>
-      <Route path="/" element={<Navigate to="/voice" replace />} />
+      <Route
+        path="/"
+        element={
+          <RequireRole allowed={["Admin", "Team Lead", "Executive"]}>
+            <HomePage />
+          </RequireRole>
+        }
+      />
       <Route path="/voice" element={<VoiceStationPage />} />
 
       <Route path="/accounts">
@@ -132,7 +140,7 @@ export default function App() {
         }
       />
 
-      <Route path="*" element={<Navigate to="/voice" replace />} />
+      <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
   );
 }

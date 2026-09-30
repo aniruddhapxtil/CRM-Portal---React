@@ -11,6 +11,8 @@ interface NavItem {
   icon: ReactNode;
   /** When set, only shown to users whose role is in this list. Omit to show to everyone. */
   roles?: string[];
+  /** Exact-match only — otherwise this item (e.g. "/") would stay highlighted on every page. */
+  end?: boolean;
 }
 
 function Icon({ children }: { children: ReactNode }) {
@@ -22,6 +24,18 @@ function Icon({ children }: { children: ReactNode }) {
 }
 
 const NAV_ITEMS: NavItem[] = [
+  {
+    to: "/",
+    label: "Home",
+    end: true,
+    roles: ["Admin", "Team Lead", "Executive"],
+    icon: (
+      <Icon>
+        <path d="M3 11l9-8 9 8" />
+        <path d="M5 10v10a1 1 0 0 0 1 1h4v-6h4v6h4a1 1 0 0 0 1-1V10" />
+      </Icon>
+    ),
+  },
   {
     to: "/voice",
     label: "Voice Station",
@@ -131,10 +145,11 @@ const NAV_ITEMS: NavItem[] = [
   },
 ];
 
-function SidebarNavLink({ to, label, icon, collapsed, onClick }: NavItem & { collapsed: boolean; onClick?: () => void }) {
+function SidebarNavLink({ to, label, icon, end, collapsed, onClick }: NavItem & { collapsed: boolean; onClick?: () => void }) {
   return (
     <NavLink
       to={to}
+      end={end}
       onClick={onClick}
       title={collapsed ? label : undefined}
       className={({ isActive }) =>
