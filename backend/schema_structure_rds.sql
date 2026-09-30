@@ -473,13 +473,16 @@ ALTER SEQUENCE public.subsidiary_id_seq OWNED BY public.subsidiary.id;
 
 CREATE TABLE public."user" (
     id integer NOT NULL,
-    role_ids integer[] NOT NULL,
     user_name character varying(150) NOT NULL,
     email_id character varying(320) NOT NULL,
     designation character varying(150),
     region character varying(100),
     phone character varying(50),
-    creation_date timestamp with time zone DEFAULT now() NOT NULL
+    creation_date timestamp with time zone DEFAULT now() NOT NULL,
+    role character varying(50) DEFAULT 'Sales Rep'::character varying NOT NULL,
+    ms_oid character varying(255),
+    is_active boolean DEFAULT true NOT NULL,
+    last_login_at timestamp without time zone
 );
 
 

@@ -9,7 +9,7 @@ This guide explains how to run the CRM with the new login, how to switch to real
 - When you open the CRM you now see a DataPhi **login page** first. Nobody gets into any CRM page or data without signing in.
 - **Demo mode (today):** a fake Microsoft login for testing on your own computer. You pick a test person from a list. It refuses to work on any real server.
 - **Microsoft mode (later):** the real "Sign in with Microsoft" button. Switch to it when IT gives you the Tenant ID, Client ID and Client Secret. That is the only thing missing.
-- Microsoft only proves **who** someone is. A table called `users` decides **whether they may enter and what role they have** (Admin, Executive, Team Lead, Sales Rep). Nobody is added automatically: an Admin must add each person first.
+- Microsoft only proves **who** someone is. The `user` table decides **whether they may enter and what role they have** (Admin, Executive, Team Lead, Sales Rep). Nobody is added automatically: an Admin must add each person first.
 - The top bar now shows the signed-in person's name and role, and a **Sign out** button.
 - If a session ends while someone is working (or an Admin deactivates them), the next click sends them back to the login page.
 
@@ -67,7 +67,7 @@ npm run build
 | Demo Team Lead | Team Lead |
 | Demo Sales Rep | Sales Rep |
 
-These four live in the `users` table only while `AUTH_MODE=demo`. They are deleted automatically when you switch to Microsoft mode.
+These four live in the `user` table only while `AUTH_MODE=demo`. They are deleted automatically when you switch to Microsoft mode.
 
 ---
 
@@ -87,7 +87,7 @@ If you have Azure access yourself, do it yourself as below.
 3. **Authentication > Add URI**: also add `http://localhost:8000/login` (this is where Microsoft sends people after sign-out). If you use the developer way (port 5173), also add `http://localhost:5173/auth/callback` and `http://localhost:5173/login`. Save.
 4. **Certificates & secrets > New client secret.** Copy the **Value** column immediately (it is shown only once). Do **not** copy "Secret ID". Note the expiry date: the login breaks the day it expires, so put a reminder in your calendar.
 5. **API permissions:** `User.Read` should already be there. If IT's rules require it, click **Grant admin consent**.
-6. Optional but recommended: **Enterprise applications > DataPhi CRM > Properties > Assignment required = Yes**, then assign only the people or group who should have the CRM. That gives two locks: Microsoft, and the `users` table.
+6. Optional but recommended: **Enterprise applications > DataPhi CRM > Properties > Assignment required = Yes**, then assign only the people or group who should have the CRM. That gives two locks: Microsoft, and the `user` table.
 
 ### 4c. Edit the `.env` file
 Open `backend\.env` in Notepad and set:
@@ -115,7 +115,7 @@ In the same backend folder, for each person (use their **Microsoft work sign-in 
 Roles allowed: `Admin`, `Executive`, `Team Lead`, `Sales Rep`. **Add yourself first as Admin.**
 
 ### 4e. Restart and test
-Restart the CRM (Ctrl + C, then step 3 again). The login page now shows **Sign in with Microsoft**. Sign in with your work account. If your email is not in the `users` table you'll see a message that includes exactly which email to add.
+Restart the CRM (Ctrl + C, then step 3 again). The login page now shows **Sign in with Microsoft**. Sign in with your work account. If your email is not in the `user` table you'll see a message that includes exactly which email to add.
 
 ### 4f. Errors you might meet
 | Message | Meaning and fix |
@@ -156,7 +156,7 @@ cd "C:\Users\UdgeethDeglurkar\Desktop\CRM\dataphi-sso"
 1. **HTTPS.** Serve the CRM only over `https://` (through IIS, nginx, Azure App Service, or similar). Set `COOKIE_SECURE=true` in `.env`. Register the `https://` redirect URIs in Azure and update `REDIRECT_URI` and `POST_LOGOUT_REDIRECT_URI`.
 2. **Demo mode must be off** (`AUTH_MODE=microsoft`). It already refuses to start on a non-localhost address, but double-check.
 3. **Secrets.** `SESSION_SECRET` and `CLIENT_SECRET` belong in the hosting platform's secret store (Azure Key Vault, etc.), not in a file people can copy. Rotate the client secret before it expires.
-4. **Session length.** Default is 8 hours (`SESSION_MAX_AGE_SECONDS=28800`). Shorten it if your policy requires. Deactivating a user in the `users` table already takes effect on their very next click, not after 8 hours.
+4. **Session length.** Default is 8 hours (`SESSION_MAX_AGE_SECONDS=28800`). Shorten it if your policy requires. Deactivating a user in the `user` table already takes effect on their very next click, not after 8 hours.
 5. **Logout protection (CSRF).** Sign-out is currently a plain link (`GET /auth/logout`), so another website could sign someone out by embedding it. It is a nuisance rather than a break-in. Before go-live, change it to a POST request with a CSRF token.
 6. **Rate limiting.** Add limits on `/auth/login`, `/auth/callback` and `/auth/mobile/exchange` (for example in nginx `limit_req`, an API gateway, or the `slowapi` package) to blunt brute-force and flooding.
 7. **Roles are not enforced on CRM actions yet.** Today anyone signed in can do everything in the CRM. `require_role("Admin", ...)` exists in the module for you to protect specific actions once the business decides who may do what.
@@ -170,7 +170,7 @@ cd "C:\Users\UdgeethDeglurkar\Desktop\CRM\dataphi-sso"
 
 - **`backend\requirements.txt` is out of date.** It still lists Whisper, torch and transformers (huge downloads, and `main.py` does not use them), but `main.py` actually needs `boto3`, `amazon-transcribe` (and optionally `imageio-ffmpeg`). I only *added* the SSO packages to it and did **not** touch the rest. The working environment in `backend\.venv` was built from what the code really imports. Someone on the team should tidy that file.
 - **Voice recording still needs your AWS setup** (AWS credentials on this computer, plus ffmpeg, which `imageio-ffmpeg` provides). That is unrelated to sign-in.
-- **The CRM already had its own `user` and `role` tables** (empty). The login uses a separate `users` table, as the design specified. Later, someone should decide whether to link them, so records can store *who* created them (`created_by` is not filled from the login yet).
+- **The CRM already had its own `user` and `role` tables** (empty). The login now uses the CRM `user` table (the old separate `users` table was merged into it and dropped on startup). `created_by` is still not filled from the login.
 - **The notification bell stores its list in the browser**, not per person. On a shared computer, the next person to sign in would see the previous person's notifications.
 - **The top-left logo** in the CRM bar (`frontend\public\site-logo.svg`) is white text on a white pill, so the word "DataPhi" is hard to read. It was like that before; a dark version of the logo would fix it. The login page uses the placeholder logo until you set `LOGO_URL` in `.env` to the official logo's address.
 - `/health` (a simple "is it alive" check) is deliberately left open, because monitoring tools call it without signing in.

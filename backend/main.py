@@ -22,8 +22,7 @@ from botocore.config import Config as BotoConfig
 from auth_service import get_current_user, get_current_user_page, require_role
 from auth_service import setup as setup_auth
 from auth_service.models import ROLES as AUTH_ROLES
-from auth_service.models import User as AuthUser
-from auth_service.database import SessionLocal as AuthSessionLocal
+from auth_service.database import init_db as init_auth_db
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -35,6 +34,7 @@ from sqlalchemy import (
     DateTime,
     ForeignKey,
     Integer,
+    Boolean,
     Numeric,
     String,
     Text,
@@ -112,13 +112,17 @@ class Role(Base):
 class User(Base):
     __tablename__ = "user"
     id: Mapped[int] = mapped_column(primary_key=True, autoincrement=True)
-    role_ids: Mapped[list[int]] = mapped_column(ARRAY(Integer), default=list, nullable=False)
     user_name: Mapped[str] = mapped_column(String(150), nullable=False)
     email_id: Mapped[str] = mapped_column(String(320), unique=True, nullable=False, index=True)
     designation: Mapped[str | None] = mapped_column(String(150))
     region: Mapped[str | None] = mapped_column(String(100))
     phone: Mapped[str | None] = mapped_column(String(50))
     creation_date: Mapped[datetime] = mapped_column(DateTime(timezone=True), server_default=func.now())
+    # Sign-in fields (used by auth_service; `role` must be one of auth_service.models.ROLES)
+    role: Mapped[str] = mapped_column(String(50), nullable=False, default="Sales Rep", server_default="Sales Rep")
+    ms_oid: Mapped[str | None] = mapped_column(String(255), unique=True)  # filled on first Microsoft login
+    is_active: Mapped[bool] = mapped_column(Boolean, default=True, server_default="true", nullable=False)
+    last_login_at: Mapped[datetime | None] = mapped_column(DateTime)
 
 
 class AttributesMixin:
@@ -935,11 +939,8 @@ class ActivityFormIn(BaseModel):
 
 
 class UserFormIn(BaseModel):
-    """Admin-only. Creates/updates a row in the CRM's own `user` table AND a matching
-    row in auth_service's separate `users` table (so the person can actually sign in) —
-    the two are keyed together by email. `role` must be one of auth_service.models.ROLES,
-    since that's what actually gates access; it's also resolved to/creates a matching
-    `role` row so `user.role_ids` stays a real DBML-shaped FK array, not a bare string."""
+    """Admin-only. Creates/updates a row in the `user` table, which is also what SSO sign-in
+    uses. `role` must be one of auth_service.models.ROLES, since that's what gates access."""
     user_id: int | None = None
     user_name: str
     email_id: str
@@ -1603,7 +1604,7 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-# Microsoft SSO (see auth_service/). Adds /login, /auth/* and the `users` table.
+# Microsoft SSO (see auth_service/). Adds /login and /auth/*; it signs users in via the `user` table.
 # Must run BEFORE the routes below so the catch-all page route at the bottom never shadows /login.
 setup_auth(app)
 
@@ -1695,6 +1696,44 @@ def run_schema_migrations():
 
     attribute_tables = ["account", "subsidiary", "contact", "lead", "opportunity", "project", "activity"]
 
+    def merge_users_table(conn, column_data_type):
+        """Folds the old SSO `users` table into `user`: adds role / ms_oid / is_active /
+        last_login_at, copies sign-in data across by email, drops user.role_ids and users."""
+        conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "role" VARCHAR(50)'))
+        conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "ms_oid" VARCHAR(255)'))
+        conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "is_active" BOOLEAN NOT NULL DEFAULT TRUE'))
+        conn.execute(text('ALTER TABLE "user" ADD COLUMN IF NOT EXISTS "last_login_at" TIMESTAMP'))
+
+        if column_data_type(conn, "users", "email") is not None:
+            # Rows that only exist in `users` (e.g. demo users) become `user` rows.
+            conn.execute(text(
+                'INSERT INTO "user" (role_ids, user_name, email_id, creation_date) '
+                "SELECT ARRAY[]::integer[], COALESCE(u.full_name, u.email), u.email, COALESCE(u.created_at, now()) "
+                'FROM "users" u WHERE NOT EXISTS (SELECT 1 FROM "user" x WHERE lower(x.email_id) = lower(u.email))'
+            ) if column_data_type(conn, "user", "role_ids") is not None else text(
+                'INSERT INTO "user" (user_name, email_id, creation_date) '
+                "SELECT COALESCE(u.full_name, u.email), u.email, COALESCE(u.created_at, now()) "
+                'FROM "users" u WHERE NOT EXISTS (SELECT 1 FROM "user" x WHERE lower(x.email_id) = lower(u.email))'
+            ))
+            conn.execute(text(
+                'UPDATE "user" SET role = u.role, ms_oid = u.ms_oid, is_active = COALESCE(u.is_active, TRUE), '
+                'last_login_at = u.last_login_at FROM "users" u WHERE lower("user".email_id) = lower(u.email)'
+            ))
+
+        if column_data_type(conn, "user", "role_ids") is not None:
+            # Anyone still without a role: take it from their old role_ids[1] -> role.role_name.
+            conn.execute(text(
+                'UPDATE "user" SET role = r.role_name FROM "role" r '
+                'WHERE "user".role IS NULL AND cardinality("user".role_ids) > 0 AND r.id = "user".role_ids[1]'
+            ))
+        conn.execute(text("UPDATE \"user\" SET role = 'Sales Rep' WHERE role IS NULL"))
+        conn.execute(text("ALTER TABLE \"user\" ALTER COLUMN \"role\" SET DEFAULT 'Sales Rep'"))
+        conn.execute(text('ALTER TABLE "user" ALTER COLUMN "role" SET NOT NULL'))
+        conn.execute(text('CREATE UNIQUE INDEX IF NOT EXISTS ix_user_ms_oid ON "user" (ms_oid)'))
+
+        conn.execute(text('ALTER TABLE "user" DROP COLUMN IF EXISTS "role_ids"'))
+        conn.execute(text('DROP TABLE IF EXISTS "users"'))
+
     with engine.begin() as conn:
         for table, column, coltype in simple_additions:
             conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "{column}" {coltype}'))
@@ -1723,6 +1762,8 @@ def run_schema_migrations():
                 conn.execute(text(f'ALTER TABLE "{table}" DROP COLUMN "{column}"'))
                 conn.execute(text(f'ALTER TABLE "{table}" RENAME COLUMN "{tmp_col}" TO "{column}"'))
 
+        merge_users_table(conn, column_data_type)
+
         for table in attribute_tables:
             for i in range(1, 11):
                 conn.execute(text(f'ALTER TABLE "{table}" ADD COLUMN IF NOT EXISTS "attribute_{i}" VARCHAR(255)'))
@@ -1732,6 +1773,7 @@ def run_schema_migrations():
 def startup():
     Base.metadata.create_all(bind=engine)
     run_schema_migrations()
+    init_auth_db()  # demo users; needs the migrated `user` table
     global _stt_service, _chat_service
     _stt_service = SarvamSTTService(api_key=settings().sarvam_api_key, model=settings().sarvam_stt_model)
     _chat_service = AWSBedrockService(region=settings().aws_region, model_id=settings().bedrock_model_id)
@@ -2544,7 +2586,7 @@ def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
 
 
 # =====================================================================
-# Admin: User Management (CRM `user` table + auth_service `users` table)
+# Admin: User Management (`user` table, also used for SSO sign-in)
 # =====================================================================
 
 @app.get("/api/roles", dependencies=REQUIRE_LOGIN)
@@ -2555,17 +2597,9 @@ def get_roles():
 @app.get("/api/users/overview", dependencies=REQUIRE_ADMIN)
 def get_users_overview(db: Session = Depends(get_db)):
     users = db.scalars(select(User).order_by(User.id.desc())).all()
-    role_names = {r.id: r.role_name for r in db.scalars(select(Role)).all()}
-
-    auth_db = AuthSessionLocal()
-    try:
-        auth_by_email = {u.email: u for u in auth_db.query(AuthUser).all()}
-    finally:
-        auth_db.close()
 
     result = []
     for u in users:
-        auth_row = auth_by_email.get(u.email_id)
         result.append({
             "id": u.id,
             "user_name": u.user_name,
@@ -2573,10 +2607,10 @@ def get_users_overview(db: Session = Depends(get_db)):
             "designation": u.designation or "N/A",
             "region": u.region or "N/A",
             "phone": u.phone or "N/A",
-            "role": role_names.get(u.role_ids[0]) if u.role_ids else None,
+            "role": u.role,
             "creation_date": u.creation_date.strftime("%Y-%m-%d %H:%M") if u.creation_date else "N/A",
-            "can_sign_in": bool(auth_row and auth_row.is_active),
-            "last_login_at": auth_row.last_login_at.isoformat() if auth_row and auth_row.last_login_at else None,
+            "can_sign_in": bool(u.is_active),
+            "last_login_at": u.last_login_at.isoformat() if u.last_login_at else None,
         })
     return result
 
@@ -2586,14 +2620,10 @@ def get_user_detail(user_id: int, db: Session = Depends(get_db)):
     u = db.scalar(select(User).where(User.id == user_id))
     if not u:
         raise HTTPException(404, "User not found.")
-    role_name = None
-    if u.role_ids:
-        role = db.scalar(select(Role).where(Role.id == u.role_ids[0]))
-        role_name = role.role_name if role else None
     return {
         "id": u.id, "user_name": u.user_name, "email_id": u.email_id,
         "designation": u.designation, "region": u.region, "phone": u.phone,
-        "role": role_name,
+        "role": u.role,
     }
 
 
@@ -2601,14 +2631,7 @@ def get_user_detail(user_id: int, db: Session = Depends(get_db)):
 def save_user_form(data: UserFormIn, db: Session = Depends(get_db)):
     email = data.email_id.strip().lower()
 
-    # 1. Resolve-or-create the matching `role` row (keeps user.role_ids a real FK array).
-    role = db.scalar(select(Role).where(Role.role_name == data.role))
-    if not role:
-        role = Role(role_name=data.role)
-        db.add(role)
-        db.flush()
-
-    # 2. Upsert the CRM `user` row.
+    # Upsert the `user` row (also grants sign-in access).
     user = None
     if data.user_id:
         user = db.scalar(select(User).where(User.id == data.user_id))
@@ -2623,31 +2646,10 @@ def save_user_form(data: UserFormIn, db: Session = Depends(get_db)):
     user.designation = data.designation
     user.region = data.region
     user.phone = data.phone
-    user.role_ids = [role.id]
+    user.role = data.role
+    user.is_active = True
     db.commit()
     db.refresh(user)
-
-    # 3. Upsert the auth_service `users` row — separate Base/engine, same Postgres — so
-    # this person can actually sign in. Best-effort: the CRM-side write above already
-    # succeeded even if this part fails, so surface that clearly rather than pretending
-    # the whole operation rolled back together.
-    auth_db = AuthSessionLocal()
-    try:
-        auth_row = auth_db.query(AuthUser).filter(AuthUser.email == email).first()
-        if not auth_row:
-            auth_row = AuthUser(email=email)
-            auth_db.add(auth_row)
-        auth_row.full_name = data.user_name
-        auth_row.role = data.role
-        auth_row.is_active = True
-        auth_db.commit()
-    except Exception as exc:
-        raise HTTPException(
-            500,
-            f"Saved the CRM user record, but failed to grant sign-in access via auth_service: {exc}",
-        ) from None
-    finally:
-        auth_db.close()
 
     return {"status": "success", "user_id": user.id}
 

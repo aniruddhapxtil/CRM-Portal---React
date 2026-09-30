@@ -37,10 +37,10 @@ def SessionLocal():
 
 
 def init_db() -> None:
-    """Create the users table. Demo mode adds test users; microsoft mode removes them."""
+    """Demo mode adds test users; microsoft mode removes them. The `user` table itself is
+    created/migrated by the CRM (main.py), so this must run after that."""
     from .models import User
 
-    Base.metadata.create_all(bind=get_engine())
     db = SessionLocal()
     try:
         if settings().mode == "demo":

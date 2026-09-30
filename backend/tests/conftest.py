@@ -26,6 +26,11 @@ from fastapi.testclient import TestClient  # noqa: E402
 import main  # noqa: E402  (the CRM app)
 
 
+# Startup (Postgres-only migrations) doesn't run here, so create just the `user` table and seed the demo users.
+main.User.__table__.create(bind=main.engine, checkfirst=True)
+main.init_auth_db()
+
+
 @pytest.fixture(scope="session")
 def crm_app():
     return main.app

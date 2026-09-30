@@ -7,7 +7,7 @@ The email must be the person's Microsoft work sign-in name.
 """
 import sys
 
-from .database import SessionLocal, Base, get_engine
+from .database import SessionLocal
 from .models import User, ROLES
 
 
@@ -17,7 +17,6 @@ def main() -> None:
         print(__doc__)
         sys.exit(1)
 
-    Base.metadata.create_all(bind=get_engine())
     db = SessionLocal()
     try:
         cmd = args[0]
