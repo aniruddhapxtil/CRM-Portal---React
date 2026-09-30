@@ -25,5 +25,32 @@
         "backend_total_ms": 6177
       }
     }
+  },
+  {
+    "timestamp": "2026-09-30T17:25:17.780230",
+    "draft_id": 1,
+    "intent": "create_account",
+    "transcript": "Create a new account with the name as Mercedes Benz with the contact name as Samuel, account manager also Samuel, region Dubai, technology stack is Azure Data Bricks, Power BI and Amazon Web Services with a deal size of 450,000 dirhams.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1858,
+        "output_tokens": 239,
+        "total_tokens": 2097
+      },
+      "costs": {
+        "stt_cost_inr": 0.1835,
+        "llm_cost_usd": 0.006106,
+        "details": {
+          "audio_duration_sec": 22.02,
+          "billable_seconds": 22.02
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1997,
+        "llm_ms": 4904,
+        "backend_total_ms": 8398
+      }
+    }
   }
 ]

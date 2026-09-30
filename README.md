@@ -18,9 +18,7 @@ The LLM does NOT generate SQL. It produces a validated command, and explicit Pyt
 
 ### 1. PostgreSQL
 
-```bash
-docker compose up -d
-```
+The app uses AWS RDS Postgres (no local Docker database). Set `DATABASE_URL` in `backend/.env` (see `.env.example`); tables are created/migrated automatically on startup.
 
 ### 2. Backend
 

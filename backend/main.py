@@ -1682,7 +1682,7 @@ def run_schema_migrations():
 
     def column_data_type(conn, table, column) -> str | None:
         return conn.execute(
-            text("SELECT data_type FROM information_schema.columns WHERE table_name=:t AND column_name=:c"),
+            text("SELECT data_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name=:t AND column_name=:c"),
             {"t": table, "c": column},
         ).scalar()
 
