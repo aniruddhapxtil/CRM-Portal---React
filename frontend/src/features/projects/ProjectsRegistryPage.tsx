@@ -41,16 +41,16 @@ export function ProjectsRegistryPage() {
   const expanded = rows.find((r) => r.id === expandedId) ?? null;
 
   const columns: DataTableColumn<ProjectOverviewRow>[] = [
-    { key: "project_name", header: "Project Name", primary: true, render: (r) => <span className="font-semibold">{r.project_name}</span> },
+    { key: "project_name", header: "Project name", primary: true, render: (r) => <span className="font-semibold">{r.project_name}</span> },
     { key: "account_name", header: "Account", render: (r) => r.account_name },
     { key: "opportunity_name", header: "Opportunity", render: (r) => r.opportunity_name },
     { key: "value", header: "Value", render: (r) => formatMoney(r.value, r.currency) },
     {
       key: "po_status",
-      header: "PO Status",
+      header: "PO status",
       render: (r) => <Badge tone={PO_STATUS_TONE[r.po_status] ?? "neutral"}>{r.po_status}</Badge>,
     },
-    { key: "po_number", header: "PO Number", render: (r) => r.po_number ?? "—" },
+    { key: "po_number", header: "PO number", render: (r) => r.po_number ?? "—" },
     {
       key: "action",
       header: "Action",

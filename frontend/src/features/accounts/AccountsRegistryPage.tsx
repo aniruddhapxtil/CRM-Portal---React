@@ -33,8 +33,8 @@ export function AccountsRegistryPage() {
       header: "Account ID",
       render: (r) => <Badge tone="brand">ACC-{String(r.id).padStart(3, "0")}</Badge>,
     },
-    { key: "name", header: "Account Name", primary: true, render: (r) => r.account_name },
-    { key: "manager", header: "Account Manager", render: (r) => r.account_manager ?? "Unassigned" },
+    { key: "name", header: "Account name", primary: true, render: (r) => r.account_name },
+    { key: "manager", header: "Account manager", render: (r) => r.account_manager ?? "Unassigned" },
     {
       key: "website",
       header: "Website",

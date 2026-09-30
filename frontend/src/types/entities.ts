@@ -370,3 +370,38 @@ export interface Lookups {
 }
 
 export type SaveResponse<K extends string> = { status: string } & Record<K, number>;
+
+// ---------- Admin: Users (CRM `user` table + auth_service `users` table) ----------
+
+export interface CrmUserOverviewRow {
+  id: number;
+  user_name: string;
+  email_id: string;
+  designation: string;
+  region: string;
+  phone: string;
+  role: string | null;
+  creation_date: string;
+  can_sign_in: boolean;
+  last_login_at: string | null;
+}
+
+export interface CrmUser {
+  id: number;
+  user_name: string;
+  email_id: string;
+  designation: string | null;
+  region: string | null;
+  phone: string | null;
+  role: string | null;
+}
+
+export interface CrmUserFormIn {
+  user_id?: number | null;
+  user_name: string;
+  email_id: string;
+  designation?: string | null;
+  region?: string | null;
+  phone?: string | null;
+  role: string;
+}

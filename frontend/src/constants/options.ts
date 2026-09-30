@@ -83,3 +83,6 @@ export const PO_STATUS_OPTIONS = ["Awaited", "Received", "Validated", "Closed", 
 export const ACTIVITY_RECORD_TYPE_OPTIONS = ["Account", "Lead", "Opportunity", "Project", "Campaign"] as const;
 
 export const ACTIVITY_RECORD_ACTION_OPTIONS = ["Email", "LinkedIn", "Meeting", "Phone Call", "WhatsApp", "Messages"] as const;
+
+/** Must exactly match auth_service.models.ROLES — that's what actually gates sign-in access. */
+export const ADMIN_ROLE_OPTIONS = ["Admin", "Executive", "Team Lead", "Sales Rep"] as const;

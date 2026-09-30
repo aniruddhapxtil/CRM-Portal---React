@@ -29,8 +29,8 @@ export function SubsidiariesRegistryPage() {
 
   const columns: DataTableColumn<SubsidiaryOverviewRow>[] = [
     { key: "id", header: "Subsidiary ID", render: (r) => <Badge tone="brand">SUB-{r.id}</Badge> },
-    { key: "name", header: "Subsidiary Name", primary: true, render: (r) => r.subsidiary_name },
-    { key: "account", header: "Parent Account", render: (r) => r.account_name },
+    { key: "name", header: "Subsidiary name", primary: true, render: (r) => r.subsidiary_name },
+    { key: "account", header: "Parent account", render: (r) => r.account_name },
     { key: "region", header: "Region", render: (r) => r.region ?? "N/A" },
     { key: "industry", header: "Industry", render: (r) => r.industry ?? "N/A" },
     { key: "contacts", header: "Contacts", render: (r) => r.contacts.length },

@@ -35,11 +35,11 @@ export function ContactsRegistryPage() {
 
   const columns: DataTableColumn<ContactOverviewRow>[] = [
     { key: "id", header: "Contact ID", render: (r) => <Badge tone="brand">CON-{r.id}</Badge> },
-    { key: "name", header: "Contact Name", primary: true, render: (r) => r.contact_name },
+    { key: "name", header: "Contact name", primary: true, render: (r) => r.contact_name },
     { key: "designation", header: "Designation", render: (r) => r.designation ?? "N/A" },
     { key: "department", header: "Department", render: (r) => r.department ?? "N/A" },
     { key: "email", header: "Email", render: (r) => r.email ?? "N/A" },
-    { key: "account", header: "Parent Account", render: (r) => r.account_name },
+    { key: "account", header: "Parent account", render: (r) => r.account_name },
     {
       key: "mobile",
       header: "Phone",

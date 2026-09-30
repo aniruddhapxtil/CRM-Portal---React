@@ -19,8 +19,11 @@ from pathlib import Path
 import boto3
 import httpx
 from botocore.config import Config as BotoConfig
-from auth_service import get_current_user, get_current_user_page
+from auth_service import get_current_user, get_current_user_page, require_role
 from auth_service import setup as setup_auth
+from auth_service.models import ROLES as AUTH_ROLES
+from auth_service.models import User as AuthUser
+from auth_service.database import SessionLocal as AuthSessionLocal
 from fastapi import Depends, FastAPI, File, Form, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -931,6 +934,28 @@ class ActivityFormIn(BaseModel):
     attributes: list[str] = Field(default_factory=list)
 
 
+class UserFormIn(BaseModel):
+    """Admin-only. Creates/updates a row in the CRM's own `user` table AND a matching
+    row in auth_service's separate `users` table (so the person can actually sign in) —
+    the two are keyed together by email. `role` must be one of auth_service.models.ROLES,
+    since that's what actually gates access; it's also resolved to/creates a matching
+    `role` row so `user.role_ids` stays a real DBML-shaped FK array, not a bare string."""
+    user_id: int | None = None
+    user_name: str
+    email_id: str
+    designation: str | None = None
+    region: str | None = None
+    phone: str | None = None
+    role: str
+
+    @field_validator("role")
+    @classmethod
+    def role_must_be_known(cls, v: str) -> str:
+        if v not in AUTH_ROLES:
+            raise ValueError(f"role must be one of: {', '.join(AUTH_ROLES)}")
+        return v
+
+
 # =====================================================================
 # AI System Prompt with Few-Shot Examples & Escape Hatch
 # =====================================================================
@@ -1584,6 +1609,8 @@ setup_auth(app)
 
 # Every /api/* route carries this, so nothing under /api is reachable without a valid session.
 REQUIRE_LOGIN = [Depends(get_current_user)]
+# User-management routes additionally require the Admin role.
+REQUIRE_ADMIN = [Depends(require_role("Admin"))]
 
 if (FRONTEND_DIST_DIR / "assets").exists():
     app.mount("/assets", StaticFiles(directory=str(FRONTEND_DIST_DIR / "assets")), name="frontend-assets")
@@ -2517,6 +2544,115 @@ def save_activity_form(data: ActivityFormIn, db: Session = Depends(get_db)):
 
 
 # =====================================================================
+# Admin: User Management (CRM `user` table + auth_service `users` table)
+# =====================================================================
+
+@app.get("/api/roles", dependencies=REQUIRE_LOGIN)
+def get_roles():
+    return list(AUTH_ROLES)
+
+
+@app.get("/api/users/overview", dependencies=REQUIRE_ADMIN)
+def get_users_overview(db: Session = Depends(get_db)):
+    users = db.scalars(select(User).order_by(User.id.desc())).all()
+    role_names = {r.id: r.role_name for r in db.scalars(select(Role)).all()}
+
+    auth_db = AuthSessionLocal()
+    try:
+        auth_by_email = {u.email: u for u in auth_db.query(AuthUser).all()}
+    finally:
+        auth_db.close()
+
+    result = []
+    for u in users:
+        auth_row = auth_by_email.get(u.email_id)
+        result.append({
+            "id": u.id,
+            "user_name": u.user_name,
+            "email_id": u.email_id,
+            "designation": u.designation or "N/A",
+            "region": u.region or "N/A",
+            "phone": u.phone or "N/A",
+            "role": role_names.get(u.role_ids[0]) if u.role_ids else None,
+            "creation_date": u.creation_date.strftime("%Y-%m-%d %H:%M") if u.creation_date else "N/A",
+            "can_sign_in": bool(auth_row and auth_row.is_active),
+            "last_login_at": auth_row.last_login_at.isoformat() if auth_row and auth_row.last_login_at else None,
+        })
+    return result
+
+
+@app.get("/api/user/{user_id}", dependencies=REQUIRE_ADMIN)
+def get_user_detail(user_id: int, db: Session = Depends(get_db)):
+    u = db.scalar(select(User).where(User.id == user_id))
+    if not u:
+        raise HTTPException(404, "User not found.")
+    role_name = None
+    if u.role_ids:
+        role = db.scalar(select(Role).where(Role.id == u.role_ids[0]))
+        role_name = role.role_name if role else None
+    return {
+        "id": u.id, "user_name": u.user_name, "email_id": u.email_id,
+        "designation": u.designation, "region": u.region, "phone": u.phone,
+        "role": role_name,
+    }
+
+
+@app.post("/api/user/save", dependencies=REQUIRE_ADMIN)
+def save_user_form(data: UserFormIn, db: Session = Depends(get_db)):
+    email = data.email_id.strip().lower()
+
+    # 1. Resolve-or-create the matching `role` row (keeps user.role_ids a real FK array).
+    role = db.scalar(select(Role).where(Role.role_name == data.role))
+    if not role:
+        role = Role(role_name=data.role)
+        db.add(role)
+        db.flush()
+
+    # 2. Upsert the CRM `user` row.
+    user = None
+    if data.user_id:
+        user = db.scalar(select(User).where(User.id == data.user_id))
+    if not user:
+        user = db.scalar(select(User).where(User.email_id == email))
+    if not user:
+        user = User(email_id=email, user_name=data.user_name)
+        db.add(user)
+
+    user.user_name = data.user_name
+    user.email_id = email
+    user.designation = data.designation
+    user.region = data.region
+    user.phone = data.phone
+    user.role_ids = [role.id]
+    db.commit()
+    db.refresh(user)
+
+    # 3. Upsert the auth_service `users` row — separate Base/engine, same Postgres — so
+    # this person can actually sign in. Best-effort: the CRM-side write above already
+    # succeeded even if this part fails, so surface that clearly rather than pretending
+    # the whole operation rolled back together.
+    auth_db = AuthSessionLocal()
+    try:
+        auth_row = auth_db.query(AuthUser).filter(AuthUser.email == email).first()
+        if not auth_row:
+            auth_row = AuthUser(email=email)
+            auth_db.add(auth_row)
+        auth_row.full_name = data.user_name
+        auth_row.role = data.role
+        auth_row.is_active = True
+        auth_db.commit()
+    except Exception as exc:
+        raise HTTPException(
+            500,
+            f"Saved the CRM user record, but failed to grant sign-in access via auth_service: {exc}",
+        ) from None
+    finally:
+        auth_db.close()
+
+    return {"status": "success", "user_id": user.id}
+
+
+# =====================================================================
 # Telemetry Retrieval Endpoint
 # =====================================================================
 
@@ -2884,10 +3020,12 @@ def serve_spa(full_path: str, request: Request):
         raise HTTPException(404, "Not found.")
 
     # Serve a real dist-root file (favicon.svg, icons.svg, ...) directly when the
-    # request matches one. These are public, non-sensitive static files.
+    # request matches one. These are public, non-sensitive static files. Unlike the
+    # content-hashed files under /assets/, these keep a stable filename across builds
+    # (logo swaps, favicon changes), so they must never be cached by the browser.
     candidate = (FRONTEND_DIST_DIR / full_path).resolve()
     if full_path and candidate.is_file() and FRONTEND_DIST_DIR.resolve() in candidate.parents:
-        return FileResponse(str(candidate))
+        return FileResponse(str(candidate), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})
 
     # Every real page of the CRM (index.html and all client-side routes) needs a signed-in user;
     # signed-out visitors are sent to /login.
@@ -2897,4 +3035,6 @@ def serve_spa(full_path: str, request: Request):
     if not index_file.exists():
         raise HTTPException(404, "Frontend build not found. Run `npm run build` in frontend/.")
 
-    return FileResponse(str(index_file))
+    # index.html references the current build's hashed JS/CSS bundle — it must never be
+    # cached, or the browser can keep running an old bundle indefinitely after a rebuild.
+    return FileResponse(str(index_file), headers={"Cache-Control": "no-cache, no-store, must-revalidate"})

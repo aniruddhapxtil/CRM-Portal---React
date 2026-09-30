@@ -1,38 +1,7 @@
 import { useState } from "react";
-import { NavLink, useNavigate } from "react-router-dom";
-import { signOut } from "../../api/auth";
-import { useAuth } from "../../context/AuthContext";
+import { useNavigate } from "react-router-dom";
 import { useNotifications } from "../../context/NotificationContext";
 import { useTheme } from "../../context/ThemeContext";
-
-const NAV_LINKS = [
-  { to: "/voice", label: "Voice Station" },
-  { to: "/accounts", label: "Accounts" },
-  { to: "/subsidiaries", label: "Subsidiaries" },
-  { to: "/contacts", label: "Contacts" },
-  { to: "/leads", label: "Leads" },
-  { to: "/opportunities", label: "Opportunities" },
-  { to: "/projects", label: "Projects" },
-  { to: "/activities", label: "Activity" },
-] as const;
-
-function NavLinkItem({ to, label, onClick }: { to: string; label: string; onClick?: () => void }) {
-  return (
-    <NavLink
-      to={to}
-      onClick={onClick}
-      className={({ isActive }) =>
-        `tap-target flex items-center rounded-md px-3 text-sm font-semibold transition-colors duration-200 ${
-          isActive
-            ? "bg-[var(--nav-active-bg)] text-white"
-            : "text-white/70 hover:bg-[var(--nav-active-bg)] hover:text-white"
-        }`
-      }
-    >
-      {label}
-    </NavLink>
-  );
-}
 
 function timeAgo(ts: number): string {
   const mins = Math.max(0, Math.round((Date.now() - ts) / 60000));
@@ -52,7 +21,7 @@ function NotificationBell() {
     <div className="relative">
       <button
         type="button"
-        className="tap-target relative flex items-center justify-center rounded-md px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+        className="tap-target relative flex items-center justify-center rounded-md text-muted transition-colors duration-200 hover:bg-canvas hover:text-ink"
         aria-label="Notifications"
         onClick={() => setOpen((o) => !o)}
       >
@@ -131,7 +100,7 @@ function ThemeToggle() {
       onClick={toggleTheme}
       aria-label={isDark ? "Switch to light mode" : "Switch to dark mode"}
       title={isDark ? "Switch to light mode" : "Switch to dark mode"}
-      className="tap-target relative flex items-center justify-center overflow-hidden rounded-md px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white"
+      className="tap-target relative flex w-10 shrink-0 items-center justify-center overflow-hidden rounded-md text-muted transition-colors duration-200 hover:bg-canvas hover:text-ink"
     >
       <svg
         width="19"
@@ -163,92 +132,23 @@ function ThemeToggle() {
   );
 }
 
-function UserBadge() {
-  const user = useAuth();
+export function TopControls({ onOpenMobileMenu }: { onOpenMobileMenu: () => void }) {
   return (
-    <div className="flex min-w-0 flex-col text-left leading-tight lg:text-right">
-      <span className="truncate text-sm font-semibold text-white">{user.name}</span>
-      <span className="flex items-center gap-1.5 text-[11px] text-white/70 lg:justify-end">
-        {user.role}
-        {user.mode === "demo" && (
-          <span className="rounded-full bg-black/25 px-1.5 py-px text-[9px] font-bold uppercase tracking-wide text-white">
-            Demo login
-          </span>
-        )}
-      </span>
-    </div>
-  );
-}
-
-export function TopNav() {
-  const [drawerOpen, setDrawerOpen] = useState(false);
-
-  return (
-    <header className="nav-gradient sticky top-0 z-30">
-      <div className="mx-auto flex h-16 max-w-[1440px] items-center gap-4 px-4 sm:px-6">
-        <div className="flex shrink-0 items-center rounded-lg bg-white/95 px-2.5 py-1.5 shadow-sm">
-          <img src="/dataphi-logo-new.png" alt="DataPhi CRM" className="h-7 w-auto" />
-        </div>
-
-        <nav className="ml-4 hidden flex-1 items-center gap-1 lg:flex">
-          {NAV_LINKS.map((l) => (
-            <NavLinkItem key={l.to} {...l} />
-          ))}
-        </nav>
-
-        <div className="ml-auto flex items-center gap-1">
-          <div className="mr-1 hidden lg:block">
-            <UserBadge />
-          </div>
-          <button
-            type="button"
-            className="tap-target flex items-center gap-1.5 rounded-md px-2 text-white/80 transition-colors duration-200 hover:bg-white/10 hover:text-white lg:px-3"
-            onClick={signOut}
-            aria-label="Sign out"
-            title="Sign out"
-          >
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" strokeLinecap="round" strokeLinejoin="round" />
-              <path d="M16 17l5-5-5-5M21 12H9" strokeLinecap="round" strokeLinejoin="round" />
-            </svg>
-            <span className="hidden text-sm font-semibold lg:inline">Sign out</span>
-          </button>
-          <ThemeToggle />
-          <NotificationBell />
-          <button
-            type="button"
-            className="tap-target flex items-center justify-center rounded-md px-2 text-white transition-colors duration-200 hover:bg-white/10 lg:hidden"
-            aria-label="Open menu"
-            onClick={() => setDrawerOpen(true)}
-          >
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-              <path d="M3 6h18M3 12h18M3 18h18" strokeLinecap="round" />
-            </svg>
-          </button>
-        </div>
+    <div className="sticky top-0 z-20 flex items-center justify-between gap-2 border-b border-border bg-surface/90 px-4 py-3 backdrop-blur sm:px-6 lg:justify-end">
+      <button
+        type="button"
+        onClick={onOpenMobileMenu}
+        aria-label="Open menu"
+        className="tap-target flex items-center justify-center rounded-md text-muted transition-colors duration-200 hover:bg-canvas hover:text-ink lg:hidden"
+      >
+        <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <path d="M3 6h18M3 12h18M3 18h18" strokeLinecap="round" />
+        </svg>
+      </button>
+      <div className="flex items-center gap-1">
+        <ThemeToggle />
+        <NotificationBell />
       </div>
-
-      {drawerOpen && (
-        <div className="fixed inset-0 z-40 lg:hidden">
-          <div className="animate-fade-in absolute inset-0 bg-black/50" onClick={() => setDrawerOpen(false)} />
-          <div className="nav-gradient animate-slide-in-right absolute right-0 top-0 flex h-full w-72 flex-col gap-1 p-4">
-            <button
-              type="button"
-              className="tap-target mb-2 ml-auto flex items-center justify-center rounded-md px-2 text-white"
-              aria-label="Close menu"
-              onClick={() => setDrawerOpen(false)}
-            >
-              ✕
-            </button>
-            {NAV_LINKS.map((l) => (
-              <NavLinkItem key={l.to} {...l} onClick={() => setDrawerOpen(false)} />
-            ))}
-            <div className="mt-auto border-t border-white/20 px-3 pt-3">
-              <UserBadge />
-            </div>
-          </div>
-        </div>
-      )}
-    </header>
+    </div>
   );
 }

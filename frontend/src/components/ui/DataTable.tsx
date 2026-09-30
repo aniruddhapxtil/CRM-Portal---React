@@ -63,7 +63,7 @@ export function DataTable<T>({
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-canvas/60 text-left text-xs font-bold uppercase tracking-wide text-muted">
+                <tr className="border-b border-border bg-canvas/60 text-left text-xs font-bold text-muted">
                   {columns.map((c) => (
                     <th key={c.key} className="px-4 py-3">
                       {c.header}
@@ -100,7 +100,7 @@ export function DataTable<T>({
                 <div className="font-semibold text-ink">{primaryCol.render(row)}</div>
                 {restCols.map((c) => (
                   <div key={c.key} className="flex justify-between gap-3 text-xs text-muted">
-                    <span className="font-semibold uppercase tracking-wide">{c.header}</span>
+                    <span className="font-semibold">{c.header}</span>
                     <span className="text-right text-ink">{c.render(row)}</span>
                   </div>
                 ))}

@@ -1,7 +1,7 @@
 @import "tailwindcss";
 
 @theme {
-  --font-sans: "Inter", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  --font-sans: "Urbanist", system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   --font-mono: "IBM Plex Mono", "SF Mono", monospace;
 
   /* Brand — deep teal to soft mint (theme/colors.ts is the canonical source) */
@@ -11,12 +11,13 @@
   --color-brand-cyan: #06e1b0; /* extras.tealAlt / tab.hoverBg / collapsible.headerBg */
   --color-brand-tint: #e8f9f1; /* background.accentLight */
 
-  /* Neutrals — warm off-white surfaces */
-  --color-ink: #0a5647; /* blue.darkest — "deep teal for text" */
-  --color-muted: #7a7a7a; /* extras.gray */
-  --color-border: #e5e1d8; /* between surface.card and surface.sidebarHover */
-  --color-surface: #fafaf8; /* surface.card */
-  --color-canvas: #f8f7f4; /* surface.warm */
+  /* Neutrals */
+  --color-ink: #0f1712; /* near-black body text (Sprint Manager reference) */
+  --color-muted: #6b7570;
+  --color-border: #e6e9e7;
+  --color-surface: #ffffff; /* cards */
+  --color-sidebar: #ffffff; /* sidebar panel */
+  --color-canvas: #f6f8f7; /* page background, one shade off white */
 
   /* Semantic */
   --color-danger: #d14545;
@@ -28,8 +29,6 @@
 }
 
 :root {
-  --nav-gradient: linear-gradient(135deg, #000000 0%, #06e1b0 100%); /* black to DataPhi green fade */
-  --nav-active-bg: #08de87; /* bright DataPhi green highlight for the active/hovered nav tab — text stays white */
   /* CTA button gradient, lifted directly from data-phi.ai/phi-genai-ai-and-ml's own buttons. */
   --cta-gradient: linear-gradient(180deg, #0dd82f 0%, #08de87 100%);
   --glass-bg: rgba(255, 255, 255, 0.7);
@@ -41,6 +40,11 @@
   --breadcrumb-bg: #f0fdf795;
   --breadcrumb-border: #06e1b0;
   --breadcrumb-text: #0a7d3e;
+
+  /* Sidebar nav item "selected" state — soft mint fill in light mode, add a teal border in dark. */
+  --nav-item-active-bg: rgba(6, 225, 176, 0.12);
+  --nav-item-active-border: transparent;
+  --nav-item-active-text: #0a7d3e;
 }
 
 /* ---------- Dark mode ----------
@@ -58,6 +62,7 @@
   --color-muted: #93a29c;
   --color-border: #2a3733;
   --color-surface: #161d1a;
+  --color-sidebar: #0d1210;
   --color-canvas: #0a0e0c;
 
   --color-danger: #f0716f;
@@ -74,6 +79,10 @@
 
   --breadcrumb-bg: rgba(6, 225, 176, 0.12);
   --breadcrumb-text: #5eead4;
+
+  --nav-item-active-bg: rgba(6, 225, 176, 0.12);
+  --nav-item-active-border: #2dd4bf;
+  --nav-item-active-text: #5eead4;
 
   color-scheme: dark;
 }
@@ -94,14 +103,23 @@ body {
     color 0.25s ease;
 }
 
-.nav-gradient {
-  background: var(--nav-gradient);
-}
-
 .breadcrumb-pill {
   background: var(--breadcrumb-bg);
   border: 1px solid var(--breadcrumb-border);
   color: var(--breadcrumb-text);
+}
+
+/* Sidebar nav item — selected state. Same DataPhi mint used everywhere else for "active/selected". */
+.nav-item-active {
+  background: var(--nav-item-active-bg);
+  border: 1px solid var(--nav-item-active-border);
+  color: var(--nav-item-active-text);
+}
+
+/* Sign-out control — the one place in the app where hover should read as destructive. */
+.signout-hover:hover {
+  background: var(--color-danger-light);
+  color: var(--color-danger);
 }
 
 /* Touch targets: every interactive control in the shared widget kit should clear this. */
@@ -170,6 +188,15 @@ input[type="number"]::-webkit-inner-spin-button {
   }
 }
 
+@keyframes slide-in-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
 @keyframes pulse-ring {
   0% {
     box-shadow: 0 0 0 0 rgba(209, 69, 69, 0.55);
@@ -195,6 +222,10 @@ input[type="number"]::-webkit-inner-spin-button {
   animation: slide-in-right 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
 }
 
+.animate-slide-in-left {
+  animation: slide-in-left 0.25s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
+
 .notif-pulse {
   animation: pulse-ring 1.8s ease-out infinite;
 }
@@ -203,6 +234,7 @@ input[type="number"]::-webkit-inner-spin-button {
   .animate-page-in,
   .animate-fade-in,
   .animate-slide-in-right,
+  .animate-slide-in-left,
   .notif-pulse {
     animation: none;
   }

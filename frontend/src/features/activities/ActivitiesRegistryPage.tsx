@@ -32,13 +32,13 @@ export function ActivitiesRegistryPage() {
   }, []);
 
   const columns: DataTableColumn<ActivityOverviewRow>[] = [
-    { key: "activity_name", header: "Activity Name", primary: true, render: (r) => <span className="font-semibold">{r.activity_name}</span> },
+    { key: "activity_name", header: "Activity name", primary: true, render: (r) => <span className="font-semibold">{r.activity_name}</span> },
     {
       key: "record_type",
-      header: "Record Type",
+      header: "Record type",
       render: (r) => <Badge tone={RECORD_TYPE_TONE[r.record_type] ?? "neutral"}>{r.record_type}</Badge>,
     },
-    { key: "linked_label", header: "Linked Record", render: (r) => r.linked_label },
+    { key: "linked_label", header: "Linked record", render: (r) => r.linked_label },
     { key: "record_action", header: "Action", render: (r) => r.record_action },
     { key: "activity_date", header: "Date", render: (r) => r.activity_date ?? "—" },
     {

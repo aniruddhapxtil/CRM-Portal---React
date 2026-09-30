@@ -38,12 +38,12 @@ export function OpportunityRegistryPage() {
 
   const columns: DataTableColumn<OpportunityOverviewRow>[] = [
     { key: "id", header: "Opp ID", render: (r) => <span className="font-mono text-xs text-muted">OPP-{r.id}</span> },
-    { key: "opportunity_name", header: "Opportunity Name", primary: true, render: (r) => <span className="font-semibold">{r.opportunity_name}</span> },
+    { key: "opportunity_name", header: "Opportunity name", primary: true, render: (r) => <span className="font-semibold">{r.opportunity_name}</span> },
     { key: "account_name", header: "Account", render: (r) => r.account_name },
     { key: "contact_name", header: "Contact SPOC", render: (r) => r.contact_name },
     {
       key: "deal_size",
-      header: "Deal Size",
+      header: "Deal size",
       render: (r) => (r.deal_size ? `${r.currency ?? "AED"} ${r.deal_size.toLocaleString()}` : "—"),
     },
     {
@@ -53,7 +53,7 @@ export function OpportunityRegistryPage() {
     },
     {
       key: "service_line",
-      header: "Service Line",
+      header: "Service line",
       render: (r) => (
         <div className="flex flex-wrap gap-1">
           {r.service_line.length === 0 ? "—" : r.service_line.map((s) => <Badge key={s}>{s}</Badge>)}

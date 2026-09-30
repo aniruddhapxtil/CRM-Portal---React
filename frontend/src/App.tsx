@@ -14,6 +14,9 @@ import { ProjectsRegistryPage } from "./features/projects/ProjectsRegistryPage";
 import { ActivityFormPage } from "./features/activities/ActivityFormPage";
 import { ActivitiesRegistryPage } from "./features/activities/ActivitiesRegistryPage";
 import { VoiceStationPage } from "./features/voice/VoiceStationPage";
+import { UsersRegistryPage } from "./features/admin/UsersRegistryPage";
+import { UserFormPage } from "./features/admin/UserFormPage";
+import { RequireAdmin } from "./components/layout/RequireAdmin";
 
 export default function App() {
   return (
@@ -61,6 +64,12 @@ export default function App() {
         <Route index element={<ActivitiesRegistryPage />} />
         <Route path="new" element={<ActivityFormPage />} />
         <Route path=":id/edit" element={<ActivityFormPage />} />
+      </Route>
+
+      <Route path="/admin/users">
+        <Route index element={<RequireAdmin><UsersRegistryPage /></RequireAdmin>} />
+        <Route path="new" element={<RequireAdmin><UserFormPage /></RequireAdmin>} />
+        <Route path=":id/edit" element={<RequireAdmin><UserFormPage /></RequireAdmin>} />
       </Route>
 
       <Route path="*" element={<Navigate to="/voice" replace />} />
