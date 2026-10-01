@@ -5,9 +5,10 @@ import { AttributeList } from "../ui/AttributeList";
 interface SidebarProps {
   /** Example phrase shown under the mic button, e.g. "Add subsidiary Al Futtaim Retail". */
   voiceExample?: string;
-  /** Wired up to useVoiceCapture() in the voice-integration phase; a no-op placeholder for now. */
   onMicClick?: () => void;
   recording?: boolean;
+  /** Set to false to omit the Voice Entry card entirely (e.g. the Project form has no voice capture). */
+  showVoiceEntry?: boolean;
   recordId?: number | string;
   createdBy?: string;
   creationDate?: string;
@@ -21,6 +22,7 @@ export function Sidebar({
   voiceExample,
   onMicClick,
   recording,
+  showVoiceEntry = true,
   recordId,
   createdBy,
   creationDate,
@@ -30,18 +32,20 @@ export function Sidebar({
 }: SidebarProps) {
   return (
     <aside className="flex w-full flex-col gap-4 lg:w-[340px] lg:shrink-0">
-      <Card accent="var(--color-brand)" title="🎙 Voice Entry">
-        <button
-          type="button"
-          onClick={onMicClick}
-          className={`tap-target flex w-full items-center justify-center gap-2 rounded-lg text-sm font-bold transition-colors ${
-            recording ? "bg-danger text-white" : "bg-brand text-ink hover:bg-brand-light"
-          }`}
-        >
-          {recording ? "⏹ Stop Recording" : "🎤 Start Recording"}
-        </button>
-        {voiceExample && <p className="mt-2 text-xs italic text-muted">e.g. "{voiceExample}"</p>}
-      </Card>
+      {showVoiceEntry && (
+        <Card accent="var(--color-brand)" title="Voice Entry">
+          <button
+            type="button"
+            onClick={onMicClick}
+            className={`tap-target flex w-full items-center justify-center gap-2 rounded-lg text-sm font-bold transition-colors ${
+              recording ? "bg-danger text-white" : "bg-brand text-ink hover:bg-brand-light"
+            }`}
+          >
+            {recording ? "⏹ Stop Recording" : "🎤 Start Recording"}
+          </button>
+          {voiceExample && <p className="mt-2 text-xs italic text-muted">e.g. "{voiceExample}"</p>}
+        </Card>
+      )}
 
       <Card title="About this record">
         <div className="flex flex-col gap-2 text-xs text-muted">

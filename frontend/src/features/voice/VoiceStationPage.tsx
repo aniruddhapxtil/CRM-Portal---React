@@ -5,21 +5,67 @@ import { Card } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
 import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
+import { SearchableSelect, type SearchableOption } from "../../components/ui/SearchableSelect";
 import { DataTable, type DataTableColumn } from "../../components/ui/DataTable";
 import { useToast } from "../../components/ui/Toast";
 import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { useNotifications } from "../../context/NotificationContext";
 import { commitVoiceDraft, getVoiceDrafts, processVoiceAudio, resumeVoiceDraft } from "../../api/voice";
+import { getLookups } from "../../api/lookups";
+import type { Lookups } from "../../types/entities";
 import type {
   ExtractedAccount,
+  ExtractedActivity,
   ExtractedContact,
   ExtractedLead,
   ExtractedOpportunity,
+  ExtractedSubsidiary,
   VoiceDraftRow,
   VoiceExtractedData,
   VoiceProcessResponse,
 } from "../../types/voice";
 
-const EMPTY_FIELDS: VoiceExtractedData = { account: {}, contact: {}, lead: {}, opportunity: {} };
+const EMPTY_FIELDS: VoiceExtractedData = {
+  account: {},
+  subsidiary: {},
+  contact: {},
+  lead: {},
+  opportunity: {},
+  activity: {},
+};
+
+/** Turns the backend's { account: {...}, contact: {...}, ... } created_records dict into plain,
+ * non-technical sentences instead of a raw JSON dump. */
+function summarizeCommit(created: Record<string, unknown>): string[] {
+  const lines: string[] = [];
+  const get = (key: string) => created[key] as Record<string, unknown> | undefined;
+
+  const account = get("account");
+  if (account) {
+    lines.push(`${account.is_new ? "Created a new" : "Linked to the existing"} Account: "${account.account_name}".`);
+  }
+  const subsidiary = get("subsidiary");
+  if (subsidiary) {
+    lines.push(`${subsidiary.is_new ? "Created a new" : "Linked to the existing"} Subsidiary: "${subsidiary.subsidiary_name}".`);
+  }
+  const contact = get("contact");
+  if (contact) {
+    lines.push(`${contact.is_new ? "Created a new" : "Linked to the existing"} Contact: "${contact.contact_name}".`);
+  }
+  const lead = get("lead");
+  if (lead) {
+    lines.push(`Created a new Lead: "${lead.lead_name}".`);
+  }
+  const opportunity = get("opportunity");
+  if (opportunity) {
+    lines.push(`Created a new Opportunity: "${opportunity.opportunity_name}".`);
+  }
+  const activity = get("activity");
+  if (activity) {
+    lines.push(`Logged an Activity: "${activity.activity_name}".`);
+  }
+  return lines.length ? lines : ["Record confirmed and committed."];
+}
 
 function formatMs(ms: number) {
   const s = Math.floor(ms / 1000);
@@ -34,6 +80,7 @@ function draftStatusTone(status: string): "success" | "warning" | "neutral" {
 
 export function VoiceStationPage() {
   const { show } = useToast();
+  const { notify } = useNotifications();
   const { isRecording, elapsedMs, error: micError, startRecording, stopRecording } = useVoiceCapture();
 
   const [busy, setBusy] = useState(false);
@@ -50,6 +97,36 @@ export function VoiceStationPage() {
 
   const [drafts, setDrafts] = useState<VoiceDraftRow[]>([]);
   const [draftsLoading, setDraftsLoading] = useState(true);
+
+  const [lookups, setLookups] = useState<Lookups | null>(null);
+  useEffect(() => {
+    getLookups().catch(() => null).then((l) => l && setLookups(l));
+  }, []);
+
+  // Name-keyed (not id-keyed) on purpose: the commit payload matches existing records by name
+  // (see execute_full_hierarchy_commit's .ilike() lookups), so picking an option here just fills
+  // in the exact existing name instead of a hand-typed one that might not match. Typing a name
+  // that doesn't match anything still works — onCreateNew lets a genuinely new name through.
+  const accountOptions: SearchableOption[] = useMemo(
+    () => (lookups?.accounts ?? []).map((a) => ({ value: a.account_name, label: a.account_name })),
+    [lookups],
+  );
+  const contactOptions: SearchableOption[] = useMemo(
+    () => (lookups?.contacts ?? []).map((c) => ({ value: c.contact_name, label: `${c.contact_name} (${c.account_name ?? "N/A"})` })),
+    [lookups],
+  );
+  const leadOrOpportunityOptions: SearchableOption[] = useMemo(() => {
+    const leads = (lookups?.leads ?? []).map((l) => ({ value: l.lead_name, label: `${l.lead_name} (${l.account_name ?? "N/A"}) — Lead` }));
+    const opps = (lookups?.opportunities ?? []).map((o) => ({ value: o.opportunity_name, label: `${o.opportunity_name} (${o.account_name ?? "N/A"}) — Opportunity` }));
+    return [...leads, ...opps];
+  }, [lookups]);
+  const linkedRecordOptions: SearchableOption[] = useMemo(() => {
+    const accounts = (lookups?.accounts ?? []).map((a) => ({ value: a.account_name, label: `${a.account_name} — Account` }));
+    const leads = (lookups?.leads ?? []).map((l) => ({ value: l.lead_name, label: `${l.lead_name} — Lead` }));
+    const opps = (lookups?.opportunities ?? []).map((o) => ({ value: o.opportunity_name, label: `${o.opportunity_name} — Opportunity` }));
+    const projects = (lookups?.projects ?? []).map((p) => ({ value: p.project_name, label: `${p.project_name} — Project` }));
+    return [...accounts, ...leads, ...opps, ...projects];
+  }, [lookups]);
 
   const missing = useMemo(() => new Set(missingFields), [missingFields]);
 
@@ -69,9 +146,11 @@ export function VoiceStationPage() {
     setIntent(res.intent);
     setFields({
       account: res.extracted_data.account ?? {},
+      subsidiary: res.extracted_data.subsidiary ?? {},
       contact: res.extracted_data.contact ?? {},
       lead: res.extracted_data.lead ?? {},
       opportunity: res.extracted_data.opportunity ?? {},
+      activity: res.extracted_data.activity ?? {},
     });
     setMissingFields(res.missing_fields ?? []);
     setClarificationPrompt(res.clarification_prompt ?? null);
@@ -123,7 +202,7 @@ export function VoiceStationPage() {
   function updateField<K extends keyof VoiceExtractedData>(
     section: K,
     key: keyof NonNullable<VoiceExtractedData[K]>,
-    value: string
+    value: string | number | null
   ) {
     setFields((prev) => ({
       ...prev,
@@ -139,9 +218,11 @@ export function VoiceStationPage() {
         draft_id: draftId,
         intent,
         account: fields.account as ExtractedAccount,
+        subsidiary: fields.subsidiary as ExtractedSubsidiary,
         contact: fields.contact as ExtractedContact,
         lead: fields.lead as ExtractedLead,
         opportunity: fields.opportunity as ExtractedOpportunity,
+        activity: fields.activity as ExtractedActivity,
       });
       setCommitted(res.created_records);
       setStatusText(`Committed in ${res.commit_ms ?? 0}ms`);
@@ -161,18 +242,34 @@ export function VoiceStationPage() {
     setIntent(row.target_entity);
     setFields({
       account: row.extracted_data.account ?? {},
+      subsidiary: row.extracted_data.subsidiary ?? {},
       contact: row.extracted_data.contact ?? {},
       lead: row.extracted_data.lead ?? {},
       opportunity: row.extracted_data.opportunity ?? {},
+      activity: row.extracted_data.activity ?? {},
     });
     setMissingFields(row.missing_fields ?? []);
     setClarificationPrompt(row.clarification_prompt ?? null);
     setTelemetry(null);
     setCommitted(null);
     setStatusText(`Loaded draft #${row.id}`);
+
+    if ((row.missing_fields ?? []).length > 0) {
+      notify({
+        id: `voice-draft-${row.id}-missing`,
+        message: row.clarification_prompt || `Draft #${row.id} is missing some required details — review and fill them in.`,
+        href: "/voice",
+      });
+    }
   }
 
-  const canCommit = !busy && Boolean(fields.account?.account_name) && Boolean(fields.contact?.contact_name);
+  // The backend commits whatever sections are actually filled in (independent of `intent` —
+  // it builds every record it has a name for, not just one). Mirroring per-intent rules here
+  // caused the exact "button stays disabled with no visible reason" bug fixed earlier, so this
+  // stays intentionally minimal: enable once there's *something* committable, and let the
+  // backend's own per-section checks (Account before Contact, Account+Contact before Lead/
+  // Opportunity) surface as a clear toast if a dependency is missing.
+  const canCommit = !busy && Boolean(fields.account?.account_name || fields.activity?.activity_name);
 
   const totalMs = telemetry?.latency?.backend_total_ms ?? 0;
   const whisperMs = telemetry?.latency?.transcribe_ms ?? telemetry?.latency?.whisper_ms ?? 0;
@@ -277,19 +374,30 @@ export function VoiceStationPage() {
 
           {committed ? (
             <div className="rounded-lg border border-success/30 bg-success-light/50 p-4 text-sm text-success">
-              <p className="mb-1 font-bold">✅ Record confirmed &amp; committed</p>
-              <pre className="whitespace-pre-wrap font-mono text-xs">{JSON.stringify(committed, null, 2)}</pre>
+              <p className="mb-2 font-bold">Record confirmed &amp; committed</p>
+              <ul className="flex flex-col gap-1">
+                {summarizeCommit(committed).map((line, i) => (
+                  <li key={i} className="flex items-start gap-1.5">
+                    <span aria-hidden="true">✓</span>
+                    <span>{line}</span>
+                  </li>
+                ))}
+              </ul>
             </div>
           ) : (
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FieldGroup title="🏢 Enterprise Account">
+              <FieldGroup title="Account Form">
                 <FieldLabel required error={missing.has("account.account_name") ? "Required" : undefined}>
                   Account Name
                 </FieldLabel>
-                <Input
+                <SearchableSelect
+                  options={accountOptions}
+                  value={fields.account?.account_name ?? null}
+                  onChange={(v) => updateField("account", "account_name", v as string | null)}
                   invalid={missing.has("account.account_name")}
-                  value={fields.account?.account_name ?? ""}
-                  onChange={(e) => updateField("account", "account_name", e.target.value)}
+                  placeholder="Search existing accounts or type a new name…"
+                  onCreateNew={(q) => updateField("account", "account_name", q)}
+                  createNewLabel={(q) => `Use "${q}" (new account)`}
                 />
                 <FieldLabel>Account Manager</FieldLabel>
                 <Input
@@ -303,14 +411,36 @@ export function VoiceStationPage() {
                 />
               </FieldGroup>
 
-              <FieldGroup title="👤 Stakeholder Contact">
+              <FieldGroup title="Subsidiary">
+                <FieldLabel>Subsidiary Name</FieldLabel>
+                <Input
+                  value={fields.subsidiary?.subsidiary_name ?? ""}
+                  onChange={(e) => updateField("subsidiary", "subsidiary_name", e.target.value)}
+                />
+                <FieldLabel>Region</FieldLabel>
+                <Input
+                  value={fields.subsidiary?.region ?? ""}
+                  onChange={(e) => updateField("subsidiary", "region", e.target.value)}
+                />
+                <FieldLabel>Industry</FieldLabel>
+                <Input
+                  value={fields.subsidiary?.industry ?? ""}
+                  onChange={(e) => updateField("subsidiary", "industry", e.target.value)}
+                />
+              </FieldGroup>
+
+              <FieldGroup title="Contact Form">
                 <FieldLabel required error={missing.has("contact.contact_name") ? "Required" : undefined}>
                   Contact Name
                 </FieldLabel>
-                <Input
+                <SearchableSelect
+                  options={contactOptions}
+                  value={fields.contact?.contact_name ?? null}
+                  onChange={(v) => updateField("contact", "contact_name", v as string | null)}
                   invalid={missing.has("contact.contact_name")}
-                  value={fields.contact?.contact_name ?? ""}
-                  onChange={(e) => updateField("contact", "contact_name", e.target.value)}
+                  placeholder="Search existing contacts or type a new name…"
+                  onCreateNew={(q) => updateField("contact", "contact_name", q)}
+                  createNewLabel={(q) => `Use "${q}" (new contact)`}
                 />
                 <FieldLabel>Designation</FieldLabel>
                 <Input
@@ -325,16 +455,23 @@ export function VoiceStationPage() {
                 />
               </FieldGroup>
 
-              <FieldGroup title="💼 Opportunity & Lead" className="sm:col-span-2">
+              <FieldGroup title="Opportunity and Lead Form" className="sm:col-span-2">
                 <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
                   <div>
                     <FieldLabel>Title</FieldLabel>
-                    <Input
-                      value={fields.opportunity?.opportunity_name ?? fields.lead?.lead_name ?? ""}
-                      onChange={(e) => {
-                        updateField("opportunity", "opportunity_name", e.target.value);
-                        updateField("lead", "lead_name", e.target.value);
+                    <SearchableSelect
+                      options={leadOrOpportunityOptions}
+                      value={fields.opportunity?.opportunity_name ?? fields.lead?.lead_name ?? null}
+                      onChange={(v) => {
+                        updateField("opportunity", "opportunity_name", v as string | null);
+                        updateField("lead", "lead_name", v as string | null);
                       }}
+                      placeholder="Search existing leads/opportunities or type a new title…"
+                      onCreateNew={(q) => {
+                        updateField("opportunity", "opportunity_name", q);
+                        updateField("lead", "lead_name", q);
+                      }}
+                      createNewLabel={(q) => `Use "${q}" (new title)`}
                     />
                   </div>
                   <div>
@@ -343,8 +480,9 @@ export function VoiceStationPage() {
                       type="number"
                       value={fields.opportunity?.deal_size ?? fields.lead?.deal_size ?? ""}
                       onChange={(e) => {
-                        updateField("opportunity", "deal_size", e.target.value);
-                        updateField("lead", "deal_size", e.target.value);
+                        const n = e.target.value ? Number(e.target.value) : null;
+                        updateField("opportunity", "deal_size", n);
+                        updateField("lead", "deal_size", n);
                       }}
                     />
                   </div>
@@ -370,12 +508,49 @@ export function VoiceStationPage() {
                   </div>
                 </div>
               </FieldGroup>
+
+              <FieldGroup title="Activity Form" className="sm:col-span-2">
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                  <div>
+                    <FieldLabel>Activity Name</FieldLabel>
+                    <Input
+                      value={fields.activity?.activity_name ?? ""}
+                      onChange={(e) => updateField("activity", "activity_name", e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>Record Action</FieldLabel>
+                    <Input
+                      value={fields.activity?.record_action ?? ""}
+                      onChange={(e) => updateField("activity", "record_action", e.target.value)}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>Linked Record</FieldLabel>
+                    <SearchableSelect
+                      options={linkedRecordOptions}
+                      value={fields.activity?.linked_record_name ?? null}
+                      onChange={(v) => updateField("activity", "linked_record_name", v as string | null)}
+                      placeholder="Search the account/lead/opportunity/project this is about…"
+                      onCreateNew={(q) => updateField("activity", "linked_record_name", q)}
+                      createNewLabel={(q) => `Use "${q}"`}
+                    />
+                  </div>
+                  <div>
+                    <FieldLabel>Next Step</FieldLabel>
+                    <Input
+                      value={fields.activity?.next_step ?? ""}
+                      onChange={(e) => updateField("activity", "next_step", e.target.value)}
+                    />
+                  </div>
+                </div>
+              </FieldGroup>
             </div>
           )}
 
           <div className="mt-5 flex justify-end border-t border-border pt-4">
             <Button disabled={!canCommit} onClick={handleCommit}>
-              💾 Confirm &amp; Commit to CRM
+              Confirm &amp; Commit to CRM
             </Button>
           </div>
         </Card>

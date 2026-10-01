@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cd \"C:\\Users\\AniruddhaPatil\\Desktop\\CRM_B_React\\frontend\")",
+      "Bash(echo tool-check-ok)",
+      "Bash(echo test)"
+    ]
+  }
+}

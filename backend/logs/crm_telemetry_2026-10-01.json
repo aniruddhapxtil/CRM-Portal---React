@@ -1,0 +1,439 @@
+[
+  {
+    "timestamp": "2026-10-01T09:15:33.855027",
+    "draft_id": 18,
+    "intent": "create_account",
+    "transcript": "Create an account for Mercedes Bank account. Achha okay. Account Manager Nirav Uddhav Patil, Region is India. Designation Manager.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1822,
+        "output_tokens": 145,
+        "total_tokens": 1967
+      },
+      "costs": {
+        "stt_cost_inr": 0.1445,
+        "llm_cost_usd": 0.005094,
+        "details": {
+          "audio_duration_sec": 17.34,
+          "billable_seconds": 17.34
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1106,
+        "llm_ms": 3637,
+        "backend_total_ms": 4894
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T09:16:01.010954",
+    "draft_id": 19,
+    "intent": "create_account",
+    "transcript": "Note, the account manager's name was Aniruddha Patil.",
+    "missing_fields": [
+      "account.account_name"
+    ],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1791,
+        "output_tokens": 99,
+        "total_tokens": 1890
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.004572,
+        "details": {
+          "audio_duration_sec": 5.22,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 810,
+        "llm_ms": 2314,
+        "backend_total_ms": 3188
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T09:35:54.428002",
+    "draft_id": 20,
+    "intent": "create_account",
+    "transcript": "Create an account for Mercedes-Benz account manager is Daimler and the region of operation is Abu Dhabi",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 1808,
+        "output_tokens": 111,
+        "total_tokens": 1919
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.004726,
+        "details": {
+          "audio_duration_sec": 7.5,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 892,
+        "llm_ms": 2312,
+        "backend_total_ms": 3339
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T10:25:37.314476",
+    "draft_id": 2,
+    "intent": "create_account",
+    "transcript": "Create an account in the name of Kayali. The account manager is Ramanj Palasi. The region of operation is Dubai and the industry is a conglomerate.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2188,
+        "output_tokens": 108,
+        "total_tokens": 2296
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.005456,
+        "details": {
+          "audio_duration_sec": 12.42,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1631,
+        "llm_ms": 3552,
+        "backend_total_ms": 5431
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T10:28:19.644141",
+    "draft_id": 3,
+    "intent": "create_activity",
+    "transcript": "Log an activity for the campaign I did for 10 accounts. The activity name will be a marketing MMJS meet X and the campaign was done through email. The next step is to contact each account.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2195,
+        "output_tokens": 141,
+        "total_tokens": 2336
+      },
+      "costs": {
+        "stt_cost_inr": 0.147,
+        "llm_cost_usd": 0.0058,
+        "details": {
+          "audio_duration_sec": 17.64,
+          "billable_seconds": 17.64
+        }
+      },
+      "latency": {
+        "transcribe_ms": 2877,
+        "llm_ms": 2439,
+        "backend_total_ms": 5396
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T10:29:54.082080",
+    "draft_id": 4,
+    "intent": "create_contact",
+    "transcript": "Create a contact in the name of Rakesh Sawant. The contact number is 5464948998.",
+    "missing_fields": [
+      "account.account_name"
+    ],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2168,
+        "output_tokens": 109,
+        "total_tokens": 2277
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.005426,
+        "details": {
+          "audio_duration_sec": 11.46,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 933,
+        "llm_ms": 2095,
+        "backend_total_ms": 3097
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T10:30:27.539495",
+    "draft_id": 4,
+    "action": "resumed_draft",
+    "transcript": "Create a contact in the name of Rakesh Sawant. The contact number is 5464948998.. Follow-up details: Mercedes Benz",
+    "missing_fields": [
+      "account.account_name"
+    ],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2184,
+        "output_tokens": 118,
+        "total_tokens": 2302
+      },
+      "costs": {
+        "stt_cost_inr": 0.0,
+        "llm_cost_usd": 0.005548
+      },
+      "latency": {
+        "transcribe_ms": 0,
+        "llm_ms": 2461,
+        "backend_total_ms": 2462
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T10:33:10.552341",
+    "draft_id": 5,
+    "intent": "create_account",
+    "transcript": "Create an account for Maruti Suzuki India. The account manager is Mr. Rakesh Singh and the region of operation is Abu Dhabi. Create an contact for the same Maruti Suzuki account. The contact name is Rakesh Singh. His designation is Vice President and the email is rakesh.maruti@gmail.com.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2247,
+        "output_tokens": 178,
+        "total_tokens": 2425
+      },
+      "costs": {
+        "stt_cost_inr": 0.208,
+        "llm_cost_usd": 0.006274,
+        "details": {
+          "audio_duration_sec": 24.96,
+          "billable_seconds": 24.96
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1273,
+        "llm_ms": 2754,
+        "backend_total_ms": 4116
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T11:00:06.654797",
+    "draft_id": 6,
+    "intent": "create_account",
+    "transcript": "Create an account for Maruti Suzuki India. The account manager is Mr. Rakesh Singh. The region of operation is Abu Dhabi. Also, attached contact for this account will be Mr. Rakesh Singh. The designation of Rakesh Singh is Vice President and his email ID is rakesh@maruti.com.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2246,
+        "output_tokens": 169,
+        "total_tokens": 2415
+      },
+      "costs": {
+        "stt_cost_inr": 0.179,
+        "llm_cost_usd": 0.006182,
+        "details": {
+          "audio_duration_sec": 21.48,
+          "billable_seconds": 21.48
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1784,
+        "llm_ms": 4027,
+        "backend_total_ms": 6128
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T11:04:08.633599",
+    "draft_id": 7,
+    "intent": "create_lead",
+    "transcript": "Create a lead for the account of Maruti Suzuki India and the contact for this particular lead would be Rakesh Singh. The lead name would be Analytical Platform and Power BI Reporting. The account manager is Rakesh Singh. The deal size is 100,000 AED and the service line is data analytics. The lead source would be outbound and classify the lead as warm. The technology stack is AWS.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2266,
+        "output_tokens": 256,
+        "total_tokens": 2522
+      },
+      "costs": {
+        "stt_cost_inr": 0.2595,
+        "llm_cost_usd": 0.007092,
+        "details": {
+          "audio_duration_sec": 31.14,
+          "billable_seconds": 31.14
+        }
+      },
+      "latency": {
+        "transcribe_ms": 4991,
+        "llm_ms": 3196,
+        "backend_total_ms": 8286
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T11:07:24.944773",
+    "draft_id": 8,
+    "intent": "create_activity",
+    "transcript": "Add a follow up to this particular lead for presenting the dashboard and the next action date would be 10th of October.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2172,
+        "output_tokens": 137,
+        "total_tokens": 2309
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.005714,
+        "details": {
+          "audio_duration_sec": 11.58,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1050,
+        "llm_ms": 3612,
+        "backend_total_ms": 4745
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T11:33:13.730770",
+    "draft_id": 9,
+    "intent": "create_lead",
+    "transcript": "had a follow up in this particular lead that we have to present the architecture diagram and the due date is the next action date would be 10th of October 2026.",
+    "missing_fields": [
+      "account.account_name",
+      "contact.contact_name"
+    ],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2507,
+        "output_tokens": 306,
+        "total_tokens": 2813
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.008074,
+        "details": {
+          "audio_duration_sec": 14.58,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 2048,
+        "llm_ms": 5477,
+        "backend_total_ms": 7855
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T11:41:40.000862",
+    "draft_id": 10,
+    "intent": "create_activity",
+    "transcript": "log and follow up for this particular lead to present the dashboard look and feel and the next date would be 9th of October 2026.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2501,
+        "output_tokens": 474,
+        "total_tokens": 2975
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.009742,
+        "details": {
+          "audio_duration_sec": 12.3,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1109,
+        "llm_ms": 6505,
+        "backend_total_ms": 7696
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T11:47:58.252786",
+    "draft_id": 11,
+    "intent": "create_lead",
+    "transcript": "Add another follow up to present the dashboard look and feel and the next date for this particular follow up will be 11th of October 2026.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2575,
+        "output_tokens": 154,
+        "total_tokens": 2729
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.00669,
+        "details": {
+          "audio_duration_sec": 11.76,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 854,
+        "llm_ms": 2683,
+        "backend_total_ms": 3614
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T12:06:46.945673",
+    "draft_id": 12,
+    "intent": "create_lead",
+    "transcript": "Add a follow-up to present the next steps of the cloud deployment and the action date would be 11th of October 2026.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2572,
+        "output_tokens": 156,
+        "total_tokens": 2728
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.006704,
+        "details": {
+          "audio_duration_sec": 12.66,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1750,
+        "llm_ms": 3932,
+        "backend_total_ms": 6007
+      }
+    }
+  },
+  {
+    "timestamp": "2026-10-01T12:13:16.044191",
+    "draft_id": 13,
+    "intent": "create_lead",
+    "transcript": "Add follow up to this particular lead for presenting the AI capability and the next action date would be 5th of October 2026.",
+    "missing_fields": [],
+    "telemetry": {
+      "tokens": {
+        "input_tokens": 2565,
+        "output_tokens": 150,
+        "total_tokens": 2715
+      },
+      "costs": {
+        "stt_cost_inr": 0.125,
+        "llm_cost_usd": 0.00663,
+        "details": {
+          "audio_duration_sec": 9.96,
+          "billable_seconds": 15.0
+        }
+      },
+      "latency": {
+        "transcribe_ms": 1003,
+        "llm_ms": 2741,
+        "backend_total_ms": 3821
+      }
+    }
+  }
+]

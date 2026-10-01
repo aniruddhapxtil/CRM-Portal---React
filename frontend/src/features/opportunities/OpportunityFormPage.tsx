@@ -12,6 +12,8 @@ import { MultiSelect } from "../../components/ui/MultiSelect";
 import { StageTrack } from "../../components/ui/StageTrack";
 import { useToast } from "../../components/ui/Toast";
 import { useAuth } from "../../context/AuthContext";
+import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { processVoiceAudio } from "../../api/voice";
 import { getOpportunity, saveOpportunity } from "../../api/opportunities";
 import { requestOpportunityQualification } from "../../api/qualifications";
 import { getLead } from "../../api/leads";
@@ -177,6 +179,52 @@ export function OpportunityFormPage() {
     setForm((f) => ({ ...f, stage, probability: OPPORTUNITY_STAGE_PROBABILITY[stage] ?? f.probability, reason: null }));
   }
 
+  const { isRecording, startRecording, stopRecording } = useVoiceCapture();
+
+  async function handleMicClick() {
+    if (isRecording) {
+      try {
+        const blob = await stopRecording();
+        if (!blob) throw new Error("No audio captured.");
+        const contextHint = isEdit
+          ? `CONTEXT: Editing existing Opportunity "${form.opportunity_name}" (record OPP-${id}). The user is adding or updating a detail for THIS opportunity — do not invent or require an account or contact name.`
+          : undefined;
+        const knownFields = isEdit
+          ? {
+              account: { account_name: lookups?.accounts.find((a) => a.id === form.account_id)?.account_name ?? null },
+              contact: { contact_name: lookups?.contacts.find((c) => c.id === form.contact_id)?.contact_name ?? null },
+              opportunity: {
+                opportunity_name: form.opportunity_name || null,
+                deal_size: form.deal_size,
+                currency: form.currency,
+                stage: form.stage,
+                next_steps: form.next_steps,
+                next_action_date: form.next_action_date,
+              },
+            }
+          : undefined;
+        const res = await processVoiceAudio(blob, contextHint, knownFields);
+        const extracted = res.extracted_data.opportunity ?? {};
+        setForm((f) => ({
+          ...f,
+          opportunity_name: extracted.opportunity_name || f.opportunity_name,
+          deal_size: extracted.deal_size ?? f.deal_size,
+          currency: extracted.currency || f.currency,
+          next_steps: extracted.next_steps || f.next_steps,
+          next_action_date: extracted.next_action_date || f.next_action_date,
+          notes: extracted.notes || f.notes,
+          service_line: extracted.service ? [extracted.service] : f.service_line,
+          technology: extracted.technology ? [extracted.technology] : f.technology,
+        }));
+        toast.show("Voice details applied — review and Save.", "success");
+      } catch (err) {
+        toast.show(err instanceof Error ? err.message : "Voice capture failed.", "danger");
+      }
+      return;
+    }
+    await startRecording();
+  }
+
   async function handleSave() {
     if (!canSave) return;
     setSaving(true);
@@ -335,12 +383,14 @@ export function OpportunityFormPage() {
                     onChange={(e) => set("deal_size", e.target.value ? Number(e.target.value) : null)}
                     placeholder="0.00"
                   />
-                  <Select
-                    options={CURRENCY_OPTIONS}
-                    value={form.currency ?? "AED"}
-                    onChange={(e) => set("currency", e.target.value)}
-                    className="w-28 shrink-0"
-                  />
+                  <div className="w-28 shrink-0">
+                    <Select
+                      options={CURRENCY_OPTIONS}
+                      value={form.currency ?? "AED"}
+                      onChange={(e) => set("currency", e.target.value)}
+                      className="w-full"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -412,6 +462,8 @@ export function OpportunityFormPage() {
 
         <Sidebar
           voiceExample="Move DIEZ Azure AI opportunity to proposal stage, 80 percent"
+          onMicClick={handleMicClick}
+          recording={isRecording}
           recordId={meta.recordId ? `OPP-${meta.recordId}` : undefined}
           attributes={form.attributes}
           onAttributesChange={(v) => set("attributes", v)}

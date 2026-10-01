@@ -58,12 +58,24 @@ export interface ExtractedOpportunity {
   notes?: string | null;
 }
 
+export interface ExtractedActivity {
+  activity_name?: string | null;
+  record_type?: string | null;
+  /** The spoken name of the referenced record — not resolved to an id; the user searches and
+   * confirms the actual linked record themselves. */
+  linked_record_name?: string | null;
+  record_action?: string | null;
+  next_step?: string | null;
+  notes?: string | null;
+}
+
 export interface VoiceExtractedData {
   account?: ExtractedAccount;
   subsidiary?: ExtractedSubsidiary;
   contact?: ExtractedContact;
   lead?: ExtractedLead;
   opportunity?: ExtractedOpportunity;
+  activity?: ExtractedActivity;
 }
 
 export interface VoiceProcessResponse {
@@ -97,6 +109,7 @@ export interface VoiceCommitPayload {
   contact: ExtractedContact;
   lead?: ExtractedLead;
   opportunity?: ExtractedOpportunity;
+  activity?: ExtractedActivity;
 }
 
 export interface VoiceCommitResponse {

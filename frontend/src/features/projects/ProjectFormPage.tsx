@@ -303,7 +303,7 @@ export function ProjectFormPage() {
         </div>
 
         <Sidebar
-          voiceExample="Update the DIEZ delivery project PO number to PO-4521"
+          showVoiceEntry={false}
           recordId={form.project_id ?? undefined}
           attributes={form.attributes}
           onAttributesChange={(attributes) => setForm((f) => ({ ...f, attributes }))}

@@ -76,6 +76,8 @@ export function LeadRegistryPage() {
         </div>
       ),
     },
+    { key: "next_steps", header: "Next steps", render: (r) => r.next_steps ?? "—" },
+    { key: "next_action_date", header: "Next action date", render: (r) => r.next_action_date ?? "—" },
     {
       key: "action",
       header: "Action",

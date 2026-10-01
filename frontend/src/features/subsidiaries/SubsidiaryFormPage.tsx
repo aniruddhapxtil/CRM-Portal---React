@@ -10,6 +10,8 @@ import { Select } from "../../components/ui/Select";
 import { SearchableSelect, type SearchableOption } from "../../components/ui/SearchableSelect";
 import { useToast } from "../../components/ui/Toast";
 import { useAuth } from "../../context/AuthContext";
+import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { processVoiceAudio } from "../../api/voice";
 import { getSubsidiary, saveSubsidiary } from "../../api/subsidiaries";
 import { getLookups } from "../../api/lookups";
 import { REGION_OPTIONS, INDUSTRY_OPTIONS } from "../../constants/options";
@@ -36,6 +38,42 @@ export function SubsidiaryFormPage() {
   const [lookups, setLookups] = useState<Lookups | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const { isRecording, startRecording, stopRecording } = useVoiceCapture();
+
+  async function handleMicClick() {
+    if (isRecording) {
+      try {
+        const blob = await stopRecording();
+        if (!blob) throw new Error("No audio captured.");
+        const contextHint = isEdit
+          ? `CONTEXT: Editing existing Subsidiary "${form.subsidiary_name}" (record SUB-${id}). The user is adding or updating a detail for THIS subsidiary.`
+          : undefined;
+        const knownFields = isEdit
+          ? {
+              account: { account_name: lookups?.accounts.find((a) => a.id === form.account_id)?.account_name ?? null },
+              subsidiary: {
+                subsidiary_name: form.subsidiary_name || null,
+                region: form.region,
+                industry: form.industry,
+              },
+            }
+          : undefined;
+        const res = await processVoiceAudio(blob, contextHint, knownFields);
+        const extracted = res.extracted_data.subsidiary ?? {};
+        setForm((f) => ({
+          ...f,
+          subsidiary_name: extracted.subsidiary_name || f.subsidiary_name,
+          region: extracted.region || f.region,
+          industry: extracted.industry || f.industry,
+        }));
+        toast.show("Voice details applied — review and Save.", "success");
+      } catch (err) {
+        toast.show(err instanceof Error ? err.message : "Voice capture failed.", "danger");
+      }
+      return;
+    }
+    await startRecording();
+  }
 
   useEffect(() => {
     let cancelled = false;
@@ -181,6 +219,8 @@ export function SubsidiaryFormPage() {
 
           <Sidebar
             voiceExample="Add subsidiary Al Futtaim Retail under DIEZ"
+            onMicClick={handleMicClick}
+            recording={isRecording}
             recordId={isEdit ? `SUB-${id}` : undefined}
             createdBy="—"
             attributes={form.attributes}

@@ -9,6 +9,8 @@ import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
 import { Select } from "../../components/ui/Select";
 import { useToast } from "../../components/ui/Toast";
 import { useAuth } from "../../context/AuthContext";
+import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { processVoiceAudio } from "../../api/voice";
 import { getAccount, saveAccount } from "../../api/accounts";
 import { REGION_OPTIONS, INDUSTRY_OPTIONS } from "../../constants/options";
 import type { AccountFormIn } from "../../types/entities";
@@ -33,6 +35,43 @@ export function AccountFormPage() {
   const [form, setForm] = useState<AccountFormIn>(BLANK);
   const [loading, setLoading] = useState(isEdit);
   const [saving, setSaving] = useState(false);
+  const { isRecording, startRecording, stopRecording } = useVoiceCapture();
+
+  async function handleMicClick() {
+    if (isRecording) {
+      try {
+        const blob = await stopRecording();
+        if (!blob) throw new Error("No audio captured.");
+        const contextHint = isEdit
+          ? `CONTEXT: Editing existing Account "${form.account_name}" (record ACC-${id}). The user is adding or updating a detail for THIS account — do not invent or require a different account name.`
+          : undefined;
+        const knownFields = isEdit
+          ? {
+              account: {
+                account_name: form.account_name || null,
+                account_manager: form.account_manager,
+                region: form.region,
+                industry: form.industry,
+              },
+            }
+          : undefined;
+        const res = await processVoiceAudio(blob, contextHint, knownFields);
+        const extracted = res.extracted_data.account ?? {};
+        setForm((f) => ({
+          ...f,
+          account_name: extracted.account_name || f.account_name,
+          account_manager: extracted.account_manager || f.account_manager,
+          region: extracted.region || f.region,
+          industry: extracted.industry || f.industry,
+        }));
+        toast.show("Voice details applied — review and Save.", "success");
+      } catch (err) {
+        toast.show(err instanceof Error ? err.message : "Voice capture failed.", "danger");
+      }
+      return;
+    }
+    await startRecording();
+  }
 
   useEffect(() => {
     if (!id) return;
@@ -173,6 +212,8 @@ export function AccountFormPage() {
 
           <Sidebar
             voiceExample="Add account Dubai Integrated Economic Zones, region Dubai"
+            onMicClick={handleMicClick}
+            recording={isRecording}
             recordId={isEdit ? `ACC-${id}` : undefined}
             createdBy="—"
             attributes={form.attributes}

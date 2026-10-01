@@ -13,6 +13,8 @@ import { Button } from "../../components/ui/Button";
 import { useToast } from "../../components/ui/Toast";
 import { useAuth } from "../../context/AuthContext";
 import { useNotifications } from "../../context/NotificationContext";
+import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { processVoiceAudio } from "../../api/voice";
 import { getLookups } from "../../api/lookups";
 import { getActivity, saveActivity } from "../../api/activities";
 import { saveAccount } from "../../api/accounts";
@@ -163,6 +165,66 @@ export function ActivityFormPage() {
     setForm((f) => ({ ...f, record_type: recordType, linked_record_id: 0, contact_id: null }));
     setQuickCreateOpen(false);
     setContactQuickCreateOpen(false);
+  }
+
+  const { isRecording, startRecording, stopRecording } = useVoiceCapture();
+
+  async function handleMicClick() {
+    if (isRecording) {
+      try {
+        const blob = await stopRecording();
+        if (!blob) throw new Error("No audio captured.");
+        const contextHint = isEdit
+          ? `CONTEXT: Editing existing Activity "${form.activity_name}" (record ${form.activity_id}). The user is adding or updating a detail for THIS activity.`
+          : undefined;
+        const knownFields = isEdit
+          ? {
+              activity: {
+                activity_name: form.activity_name || null,
+                record_type: form.record_type,
+                record_action: form.record_action,
+                next_step: form.next_step,
+              },
+            }
+          : undefined;
+        const res = await processVoiceAudio(blob, contextHint, knownFields);
+        const extracted = res.extracted_data.activity ?? {};
+
+        const matchedType = ACTIVITY_RECORD_TYPE_OPTIONS.find(
+          (o) => o.toLowerCase() === (extracted.record_type ?? "").toLowerCase(),
+        );
+        const matchedAction = ACTIVITY_RECORD_ACTION_OPTIONS.find(
+          (o) => o.toLowerCase() === (extracted.record_action ?? "").toLowerCase(),
+        );
+
+        setForm((f) => ({
+          ...f,
+          activity_name: extracted.activity_name || f.activity_name,
+          next_step: extracted.next_step || f.next_step,
+          notes: extracted.notes || f.notes,
+          record_type: matchedType ?? f.record_type,
+          record_action: matchedAction ?? f.record_action,
+          linked_record_id: matchedType && matchedType !== f.record_type ? 0 : f.linked_record_id,
+          contact_id: matchedType && matchedType !== f.record_type ? null : f.contact_id,
+        }));
+
+        toast.show(
+          extracted.linked_record_name
+            ? `Voice detected "${extracted.linked_record_name}" — search and select it below.`
+            : "Voice details applied — review and Save.",
+          "success",
+        );
+        notify({
+          id: `voice-activity-draft-${Date.now()}`,
+          message: "Voice-filled Activity ready for review",
+          href: `${location.pathname}${location.search}`,
+        });
+      } catch (err) {
+        toast.show(err instanceof Error ? err.message : "Voice capture failed.", "danger");
+      }
+      return;
+    }
+    await startRecording();
   }
 
   function openQuickCreate(typedName: string) {
@@ -422,6 +484,8 @@ export function ActivityFormPage() {
 
         <Sidebar
           voiceExample="Logged a call with Tariq Mansoor, interested in the proposal"
+          onMicClick={handleMicClick}
+          recording={isRecording}
           recordId={form.activity_id ?? undefined}
           attributes={form.attributes}
           onAttributesChange={(attributes) => setForm((f) => ({ ...f, attributes }))}

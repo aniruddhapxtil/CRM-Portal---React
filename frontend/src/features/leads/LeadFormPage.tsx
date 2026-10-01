@@ -12,6 +12,8 @@ import { MultiSelect } from "../../components/ui/MultiSelect";
 import { useToast } from "../../components/ui/Toast";
 import { useNotifications } from "../../context/NotificationContext";
 import { useAuth } from "../../context/AuthContext";
+import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { processVoiceAudio } from "../../api/voice";
 import { getLead, saveLead } from "../../api/leads";
 import { requestLeadQualification } from "../../api/qualifications";
 import { getAccount } from "../../api/accounts";
@@ -177,6 +179,51 @@ export function LeadFormPage() {
     setForm((f) => ({ ...f, [key]: value }));
   }
 
+  const { isRecording, startRecording, stopRecording } = useVoiceCapture();
+
+  async function handleMicClick() {
+    if (isRecording) {
+      try {
+        const blob = await stopRecording();
+        if (!blob) throw new Error("No audio captured.");
+        const contextHint = isEdit
+          ? `CONTEXT: Editing existing Lead "${form.lead_name}" (record LEAD-${id}). The user is adding or updating a detail for THIS lead — do not invent or require an account or contact name.`
+          : undefined;
+        const knownFields = isEdit
+          ? {
+              account: { account_name: lookups?.accounts.find((a) => a.id === form.account_id)?.account_name ?? null },
+              contact: { contact_name: lookups?.contacts.find((c) => c.id === form.contact_id)?.contact_name ?? null },
+              lead: {
+                lead_name: form.lead_name || null,
+                deal_size: form.deal_size,
+                currency: form.currency,
+                next_steps: form.next_steps,
+                next_action_date: form.next_action_date,
+              },
+            }
+          : undefined;
+        const res = await processVoiceAudio(blob, contextHint, knownFields);
+        const extracted = res.extracted_data.lead ?? {};
+        setForm((f) => ({
+          ...f,
+          lead_name: extracted.lead_name || f.lead_name,
+          deal_size: extracted.deal_size ?? f.deal_size,
+          currency: extracted.currency || f.currency,
+          next_steps: extracted.next_steps || f.next_steps,
+          next_action_date: extracted.next_action_date || f.next_action_date,
+          notes: extracted.notes || f.notes,
+          service_line: extracted.service ? [extracted.service] : f.service_line,
+          technology: extracted.technology ? [extracted.technology] : f.technology,
+        }));
+        toast.show("Voice details applied — review and Save.", "success");
+      } catch (err) {
+        toast.show(err instanceof Error ? err.message : "Voice capture failed.", "danger");
+      }
+      return;
+    }
+    await startRecording();
+  }
+
   async function handleSave() {
     if (!canSave) return;
     setSaving(true);
@@ -306,12 +353,14 @@ export function LeadFormPage() {
                     onChange={(e) => set("deal_size", e.target.value ? Number(e.target.value) : null)}
                     placeholder="0.00"
                   />
-                  <Select
-                    options={CURRENCY_OPTIONS}
-                    value={form.currency ?? "AED"}
-                    onChange={(e) => set("currency", e.target.value)}
-                    className="w-28 shrink-0"
-                  />
+                  <div className="w-28 shrink-0">
+                    <Select
+                      options={CURRENCY_OPTIONS}
+                      value={form.currency ?? "AED"}
+                      onChange={(e) => set("currency", e.target.value)}
+                      className="w-full"
+                    />
+                  </div>
                 </div>
               </div>
 
@@ -393,6 +442,8 @@ export function LeadFormPage() {
 
         <Sidebar
           voiceExample="Add lead IoT Telemetry Lakehouse for DIEZ, hot lead, Azure Databricks"
+          onMicClick={handleMicClick}
+          recording={isRecording}
           recordId={meta.recordId ? `LEAD-${meta.recordId}` : undefined}
           attributes={form.attributes}
           onAttributesChange={(v) => set("attributes", v)}

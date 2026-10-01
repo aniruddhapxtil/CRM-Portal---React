@@ -9,6 +9,8 @@ import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
 import { SearchableSelect, type SearchableOption } from "../../components/ui/SearchableSelect";
 import { useToast } from "../../components/ui/Toast";
 import { useAuth } from "../../context/AuthContext";
+import { useVoiceCapture } from "../../hooks/useVoiceCapture";
+import { processVoiceAudio } from "../../api/voice";
 import { getContact, saveContact } from "../../api/contacts";
 import { getLookups } from "../../api/lookups";
 import { COUNTRY_CODES, DEFAULT_COUNTRY_DIAL_CODE } from "../../constants/countryCodes";
@@ -105,6 +107,47 @@ export function ContactFormPage() {
   function setPhone(key: "mobile" | "secondary_mobile", raw: string) {
     const digits = raw.replace(/\D/g, "").slice(0, 10);
     set(key, digits);
+  }
+
+  const { isRecording, startRecording, stopRecording } = useVoiceCapture();
+
+  async function handleMicClick() {
+    if (isRecording) {
+      try {
+        const blob = await stopRecording();
+        if (!blob) throw new Error("No audio captured.");
+        const contextHint = isEdit
+          ? `CONTEXT: Editing existing Contact "${form.contact_name}" (record CON-${id}). The user is adding or updating a detail for THIS contact — do not invent or require an account name.`
+          : undefined;
+        const knownFields = isEdit
+          ? {
+              account: { account_name: lookups?.accounts.find((a) => a.id === form.account_id)?.account_name ?? null },
+              contact: {
+                contact_name: form.contact_name || null,
+                designation: form.designation,
+                email: form.email,
+                linkedin_url: form.linkedin_url,
+              },
+            }
+          : undefined;
+        const res = await processVoiceAudio(blob, contextHint, knownFields);
+        const extracted = res.extracted_data.contact ?? {};
+        setForm((f) => ({
+          ...f,
+          contact_name: extracted.contact_name || f.contact_name,
+          designation: extracted.designation || f.designation,
+          email: extracted.email || f.email,
+          linkedin_url: extracted.linkedin_url || f.linkedin_url,
+          notes: extracted.notes || f.notes,
+          mobile: extracted.mobile ? extracted.mobile.replace(/\D/g, "").slice(0, 10) : f.mobile,
+        }));
+        toast.show("Voice details applied — review and Save.", "success");
+      } catch (err) {
+        toast.show(err instanceof Error ? err.message : "Voice capture failed.", "danger");
+      }
+      return;
+    }
+    await startRecording();
   }
 
   const accountOptions: SearchableOption[] =
@@ -304,6 +347,8 @@ export function ContactFormPage() {
 
           <Sidebar
             voiceExample="Add contact Tariq Mansoor, VP of Data Science at DIEZ"
+            onMicClick={handleMicClick}
+            recording={isRecording}
             recordId={isEdit ? `CON-${id}` : undefined}
             createdBy="—"
             attributes={form.attributes}

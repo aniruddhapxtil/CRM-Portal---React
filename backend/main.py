@@ -1,6 +1,7 @@
 import asyncio
 import io
 import json
+import logging
 import mimetypes
 import os
 import re
@@ -429,6 +430,24 @@ def resolve_relative_date(v) -> date | None:
         except ValueError:
             continue
 
+    # Natural phrasing the LLM sometimes passes through verbatim instead of normalizing itself,
+    # e.g. "10th of October" or "October 10th" — strip ordinal suffixes, then try common layouts.
+    stripped = re.sub(r"\b(\d{1,2})(st|nd|rd|th)\b", r"\1", cleaned, flags=re.IGNORECASE)
+    stripped = re.sub(r"\bof\b", "", stripped, flags=re.IGNORECASE)
+    stripped = re.sub(r"\s+", " ", stripped).strip()
+    for fmt in ("%d %B %Y", "%d %b %Y", "%B %d %Y", "%b %d %Y", "%d %B", "%B %d", "%d %b", "%b %d"):
+        try:
+            parsed = datetime.strptime(stripped, fmt)
+            year = parsed.year if "%Y" in fmt else today.year
+            candidate = date(year, parsed.month, parsed.day)
+            # No year spoken and the date already passed this year — assume next year
+            # (business follow-ups are forward-looking).
+            if "%Y" not in fmt and candidate < today:
+                candidate = date(year + 1, parsed.month, parsed.day)
+            return candidate
+        except ValueError:
+            continue
+
     return None
 
 
@@ -632,9 +651,16 @@ def deterministic_transcript_fallback(payload, transcript: str):
                 payload.opportunity.next_steps = extracted_step
 
 
-def evaluate_mandatory_fields(payload, transcript: str) -> tuple[list[str], str]:
+def evaluate_mandatory_fields(payload, transcript: str, has_context: bool = False) -> tuple[list[str], str]:
     missing = []
     questions = []
+
+    if has_context:
+        # The caller already told us exactly which record this capture is about (see
+        # process_voice's context_hint) — this is an in-place edit/follow-up, not a new-record
+        # creation flow, so there's nothing to require here. Whatever fields came back are
+        # whatever the user actually said; the calling page merges only those into its form.
+        return missing, ""
 
     if re.search(r"\b(create|add|new)\s+(an?\s+)?(opportunity|deal|opty)\b", transcript, re.I):
         payload.intent = "create_opportunity"
@@ -642,12 +668,21 @@ def evaluate_mandatory_fields(payload, transcript: str) -> tuple[list[str], str]
         payload.intent = "create_account"
     elif re.search(r"\b(create|add|new)\s+(an?\s+)?contact\b", transcript, re.I):
         payload.intent = "create_contact"
+    elif re.search(r"\b(log|record)\s+(an?\s+)?(activity|call|meeting|email|message)\b", transcript, re.I):
+        payload.intent = "create_activity"
 
     payload.account.account_name = sanitize_value(payload.account.account_name)
     payload.account.account_manager = sanitize_value(payload.account.account_manager)
     payload.contact.contact_name = sanitize_value(payload.contact.contact_name)
     payload.contact.email = sanitize_value(payload.contact.email)
     payload.contact.mobile = sanitize_value(payload.contact.mobile)
+    payload.activity.activity_name = sanitize_value(payload.activity.activity_name)
+
+    if payload.intent == "create_activity":
+        if not payload.activity.activity_name:
+            missing.append("activity.activity_name")
+            questions.append("What is this activity about — give it a short name.")
+        return missing, " ".join(questions)
 
     if payload.intent == "create_account":
         if not payload.account.account_name:
@@ -800,6 +835,18 @@ class ExtractedOpportunity(BaseModel):
         return resolve_relative_date(v)
 
 
+class ExtractedActivity(BaseModel):
+    activity_name: str | None = None
+    record_type: str | None = None
+    # The spoken name of the referenced Account/Lead/Opportunity/Project — intentionally NOT
+    # resolved to a real record id server-side; the user searches and confirms the actual
+    # linked record client-side, same as every other voice-filled field is user-editable.
+    linked_record_name: str | None = None
+    record_action: str | None = None
+    next_step: str | None = None
+    notes: str | None = None
+
+
 class FullLifecycleVoicePayload(BaseModel):
     model_config = ConfigDict(extra="ignore")
     intent: str = "create_lead"
@@ -808,8 +855,9 @@ class FullLifecycleVoicePayload(BaseModel):
     contact: ExtractedContact = Field(default_factory=ExtractedContact)
     lead: ExtractedLead = Field(default_factory=ExtractedLead)
     opportunity: ExtractedOpportunity = Field(default_factory=ExtractedOpportunity)
+    activity: ExtractedActivity = Field(default_factory=ExtractedActivity)
 
-    @field_validator("account", "subsidiary", "contact", "lead", "opportunity", mode="before")
+    @field_validator("account", "subsidiary", "contact", "lead", "opportunity", "activity", mode="before")
     @classmethod
     def coerce_null_to_empty_dict(cls, v):
         return {} if (v is None or not isinstance(v, dict)) else v
@@ -824,8 +872,9 @@ class ConfirmedCommitPayload(BaseModel):
     contact: ExtractedContact = Field(default_factory=ExtractedContact)
     lead: ExtractedLead = Field(default_factory=ExtractedLead)
     opportunity: ExtractedOpportunity = Field(default_factory=ExtractedOpportunity)
+    activity: ExtractedActivity = Field(default_factory=ExtractedActivity)
 
-    @field_validator("account", "subsidiary", "contact", "lead", "opportunity", mode="before")
+    @field_validator("account", "subsidiary", "contact", "lead", "opportunity", "activity", mode="before")
     @classmethod
     def coerce_null_to_empty_dict(cls, v):
         return {} if (v is None or not isinstance(v, dict)) else v
@@ -1035,16 +1084,20 @@ Your duty is to transform spoken sales notes, meeting transcripts, and partner c
 2. NOTES CONSTRAINT: Keep "notes" null or under 6 words. NEVER copy, repeat, or echo the raw spoken transcript back into any notes field.
 3. OPPORTUNITY TO LEAD BACKFILLING: When intent is "create_opportunity", always populate BOTH opportunity and lead objects with identical deal scope, and populate account metadata.
 4. ZERO HALLUCINATION / ESCAPE HATCH: If a parameter is NOT spoken, return null. Never invent dummy data like 'John Doe', 'Company Name', or arbitrary numerical figures. Output valid JSON only, without Markdown prose.
+5. DATE NORMALIZATION: Always convert any spoken date reference ("10th of October", "next Friday", "Oct 10th") to strict ISO format YYYY-MM-DD yourself, using the Reference date given below for anything relative or year-less. Never pass the spoken phrase through unconverted.
+6. EDITING AN EXISTING RECORD: If the input begins with a line starting "CONTEXT:", the user is already viewing/editing one specific existing record (its details are given in that line) — they are adding or updating a detail for THAT record, not describing a brand-new one. In this case: do NOT invent or require an account/contact/lead/opportunity name — leave every name field null unless the user explicitly restates it, and extract only the specific fields they actually mention (e.g. just next_steps and next_action_date for a follow-up note). Set "intent" to whatever best matches the entity named in the CONTEXT line (e.g. "create_lead" if it says "Editing existing Lead").
 
 ### SCHEMA (JSON ONLY)
 {
-  "intent": "create_opportunity" | "create_lead" | "create_account" | "create_contact",
+  "intent": "create_opportunity" | "create_lead" | "create_account" | "create_contact" | "create_activity",
   "account": {"account_name": null, "region": null, "industry": null, "account_manager": null},
   "subsidiary": {"subsidiary_name": null},
   "contact": {"contact_name": null, "designation": null, "email": null, "mobile": null, "notes": null},
   "lead": {"lead_name": null, "deal_size": null, "currency": "AED", "type": "Hot", "service": null, "technology": null, "next_steps": null, "next_action_date": null, "closure_date": null, "notes": null},
-  "opportunity": {"opportunity_name": null, "deal_size": null, "currency": "AED", "project_type": "T&M", "service": null, "stage": "Discovery (40%)", "probability": 40, "technology": null, "next_steps": null, "notes": null}
+  "opportunity": {"opportunity_name": null, "deal_size": null, "currency": "AED", "project_type": "T&M", "service": null, "stage": "Discovery (40%)", "probability": 40, "technology": null, "next_steps": null, "notes": null},
+  "activity": {"activity_name": null, "record_type": null, "linked_record_name": null, "record_action": null, "next_step": null, "notes": null}
 }
+Use intent "create_activity" when the speaker describes logging an interaction (a call, email, meeting, message) against an EXISTING Account/Lead/Opportunity/Project, rather than creating a new commercial record. "linked_record_name" is whatever company/deal name they refer to — never invent or resolve it to an id.
 
 ### FEW-SHOT EXAMPLES
 
@@ -1070,6 +1123,19 @@ Output:
   "contact": {"contact_name": "Budur", "designation": null, "email": null, "mobile": null, "notes": null},
   "lead": {"lead_name": "DAS - Cloud Migration", "deal_size": null, "currency": "AED", "type": "Warm", "service": "Cloud Migration", "technology": null, "next_steps": "Schedule demo", "next_action_date": null, "closure_date": null, "notes": null},
   "opportunity": null
+}
+
+#### Example 3: Logging an Activity Against an Existing Record
+Transcript: "Log a call with Acme Corp about the contract renewal, next step is to send a quote."
+Output:
+{
+  "intent": "create_activity",
+  "account": null,
+  "subsidiary": null,
+  "contact": null,
+  "lead": null,
+  "opportunity": null,
+  "activity": {"activity_name": "Contract Renewal Discussion", "record_type": "Account", "linked_record_name": "Acme Corp", "record_action": "Phone Call", "next_step": "Send a quote", "notes": null}
 }
 """
 
@@ -1376,56 +1442,49 @@ def convert_to_wav_16k(input_path: str) -> tuple[bytes, float]:
 
 
 def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) -> dict:
+    """Builds every record whose identifying field was actually filled in, independent of the
+    single `intent` the LLM guessed. A transcript asking for an Account AND a Contact (or a Lead,
+    or an Opportunity, or an Activity, in any combination) previously only ever created ONE of
+    them — intent was used as an exclusive branch that returned early. Now each section is
+    evaluated on its own: present a name, it gets created/matched; omit it, it's skipped."""
     user_id = payload.user_id
+    created: dict = {}
 
+    # --- Account (the anchor — everything else links to it) ---
+    account = None
     account_name = (payload.account.account_name or "").strip()
-    if not account_name:
-        raise HTTPException(400, "Account name is mandatory to commit.")
+    if account_name:
+        account = db.scalar(select(Account).where(Account.account_name.ilike(account_name)))
+        if not account:
+            account = Account(
+                account_name=account_name,
+                account_manager=payload.account.account_manager,
+                region=payload.account.region,
+                industry=payload.account.industry,
+                created_by=user_id,
+                updated_by=user_id,
+            )
+            db.add(account)
+            db.flush()
+            created["account"] = {
+                "account_id": account.id, "account_name": account.account_name, "is_new": True,
+            }
+        else:
+            if payload.account.account_manager and not account.account_manager:
+                account.account_manager = payload.account.account_manager
+            if payload.account.region and not account.region:
+                account.region = payload.account.region
+            if payload.account.industry and not account.industry:
+                account.industry = payload.account.industry
+            stamp_audit(account, user_id, False)
+            created["account"] = {
+                "account_id": account.id, "account_name": account.account_name, "is_new": False,
+            }
 
-    account = db.scalar(select(Account).where(Account.account_name.ilike(account_name)))
-    if not account:
-        account = Account(
-            account_name=account_name,
-            account_manager=payload.account.account_manager,
-            region=payload.account.region,
-            industry=payload.account.industry,
-            created_by=user_id,
-            updated_by=user_id,
-        )
-        db.add(account)
-        db.flush()
-    else:
-        if payload.account.account_manager and not account.account_manager:
-            account.account_manager = payload.account.account_manager
-        if payload.account.region and not account.region:
-            account.region = payload.account.region
-        if payload.account.industry and not account.industry:
-            account.industry = payload.account.industry
-        stamp_audit(account, user_id, False)
-
-    if payload.intent == "create_account":
-        activity = Activity(
-            activity_name=f"Account Confirmed: {account.account_name}",
-            account_id=account.id,
-            record_type="Account",
-            record_action="System Action",
-            account_name=account.account_name,
-            notes=f"Confirmed and committed. Manager: {account.account_manager or 'N/A'}, Region: {account.region or 'N/A'}",
-            created_by=user_id,
-        )
-        db.add(activity)
-        db.commit()
-        return {
-            "entity_type": "Account",
-            "account_id": account.id,
-            "account_name": account.account_name,
-            "account_manager": account.account_manager,
-            "activity_id": activity.id,
-        }
-
+    # --- Subsidiary (requires an Account) ---
     subsidiary = None
-    if payload.subsidiary.subsidiary_name:
-        sub_name = payload.subsidiary.subsidiary_name.strip()
+    sub_name = (payload.subsidiary.subsidiary_name or "").strip()
+    if sub_name and account:
         subsidiary = db.scalar(
             select(Subsidiary).where(
                 Subsidiary.subsidiary_name.ilike(sub_name),
@@ -1443,70 +1502,64 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
             )
             db.add(subsidiary)
             db.flush()
+            created["subsidiary"] = {"subsidiary_id": subsidiary.id, "subsidiary_name": subsidiary.subsidiary_name, "is_new": True}
+        else:
+            stamp_audit(subsidiary, user_id, False)
+            created["subsidiary"] = {"subsidiary_id": subsidiary.id, "subsidiary_name": subsidiary.subsidiary_name, "is_new": False}
 
+    # --- Contact (requires an Account) ---
+    contact = None
     contact_name = (payload.contact.contact_name or "").strip()
-    if not contact_name:
-        raise HTTPException(400, "Contact stakeholder name is mandatory to commit.")
-
-    contact = db.scalar(
-        select(Contact).where(
-            Contact.contact_name.ilike(contact_name),
-            Contact.account_id == account.id,
+    if contact_name:
+        if not account:
+            raise HTTPException(400, "An Account name is required before a Contact can be committed.")
+        contact = db.scalar(
+            select(Contact).where(
+                Contact.contact_name.ilike(contact_name),
+                Contact.account_id == account.id,
+            )
         )
-    )
-    if not contact:
-        contact = Contact(
-            account_id=account.id,
-            subsidiary_id=subsidiary.id if subsidiary else None,
-            contact_name=contact_name,
-            designation=payload.contact.designation,
-            email=payload.contact.email,
-            mobile=payload.contact.mobile,
-            linkedin_url=payload.contact.linkedin_url,
-            notes=payload.contact.notes,
-            created_by=user_id,
-            updated_by=user_id,
-        )
-        db.add(contact)
-        db.flush()
-    else:
-        if payload.contact.designation and not contact.designation:
-            contact.designation = payload.contact.designation
-        if payload.contact.mobile and not contact.mobile:
-            contact.mobile = payload.contact.mobile
-        if payload.contact.email and not contact.email:
-            contact.email = payload.contact.email
-        stamp_audit(contact, user_id, False)
+        if not contact:
+            contact = Contact(
+                account_id=account.id,
+                subsidiary_id=subsidiary.id if subsidiary else None,
+                contact_name=contact_name,
+                designation=payload.contact.designation,
+                email=payload.contact.email,
+                mobile=payload.contact.mobile,
+                linkedin_url=payload.contact.linkedin_url,
+                notes=payload.contact.notes,
+                created_by=user_id,
+                updated_by=user_id,
+            )
+            db.add(contact)
+            db.flush()
+            created["contact"] = {
+                "contact_id": contact.id, "contact_name": contact.contact_name,
+                "designation": contact.designation, "is_new": True,
+            }
+        else:
+            if payload.contact.designation and not contact.designation:
+                contact.designation = payload.contact.designation
+            if payload.contact.mobile and not contact.mobile:
+                contact.mobile = payload.contact.mobile
+            if payload.contact.email and not contact.email:
+                contact.email = payload.contact.email
+            stamp_audit(contact, user_id, False)
+            created["contact"] = {
+                "contact_id": contact.id, "contact_name": contact.contact_name,
+                "designation": contact.designation, "is_new": False,
+            }
 
-    if payload.intent == "create_contact":
-        activity = Activity(
-            activity_name=f"Contact Created: {contact.contact_name}",
-            account_id=account.id,
-            subsidiary_id=subsidiary.id if subsidiary else None,
-            contact_id=contact.id,
-            record_type="Contact",
-            record_action="System Action",
-            account_name=account.account_name,
-            contact_name=contact.contact_name,
-            notes=f"Contact added to {account.account_name}. Role: {contact.designation or 'N/A'}",
-            created_by=user_id,
-        )
-        db.add(activity)
-        db.commit()
+    # --- Opportunity (backfills a Qualified Lead alongside it) — requires Account + Contact ---
+    opportunity = None
+    lead = None
+    wants_opportunity = bool((payload.opportunity.opportunity_name or "").strip() or payload.opportunity.deal_size)
+    wants_lead = bool((payload.lead.lead_name or "").strip())
 
-        return {
-            "entity_type": "Contact",
-            "account_id": account.id,
-            "account_name": account.account_name,
-            "contact_id": contact.id,
-            "contact_name": contact.contact_name,
-            "designation": contact.designation,
-            "email": contact.email,
-            "mobile": contact.mobile,
-            "activity_id": activity.id,
-        }
-
-    if payload.intent == "create_opportunity":
+    if wants_opportunity:
+        if not account or not contact:
+            raise HTTPException(400, "An Account and a Contact are required before an Opportunity can be committed.")
         opp_title = (
             payload.opportunity.opportunity_name
             or payload.lead.lead_name
@@ -1534,6 +1587,7 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
         )
         db.add(backfilled_lead)
         db.flush()
+        lead = backfilled_lead
 
         opportunity = Opportunity(
             opportunity_name=opp_title,
@@ -1557,98 +1611,104 @@ def execute_full_hierarchy_commit(db: Session, payload: ConfirmedCommitPayload) 
         )
         db.add(opportunity)
         db.flush()
+        created["opportunity"] = {
+            "opportunity_id": opportunity.id, "opportunity_name": opportunity.opportunity_name,
+            "opportunity_stage": opportunity.stage,
+            "deal_size": float(opportunity.deal_size) if opportunity.deal_size else 0,
+            "currency": opportunity.currency, "is_new": True,
+        }
+        created["lead"] = {
+            "lead_id": backfilled_lead.id, "lead_name": backfilled_lead.lead_name,
+            "lead_stage": backfilled_lead.stage, "is_new": True,
+        }
 
-        activity = Activity(
-            activity_name=f"Opportunity Confirmed: {opportunity.opportunity_name}",
+    elif wants_lead:
+        if not account or not contact:
+            raise HTTPException(400, "An Account and a Contact are required before a Lead can be committed.")
+        lead_title = payload.lead.lead_name or f"{account.account_name} - {payload.lead.service or 'Consulting'} Engagement"
+
+        lead = Lead(
+            lead_name=lead_title,
             account_id=account.id,
             subsidiary_id=subsidiary.id if subsidiary else None,
             contact_id=contact.id,
-            lead_id=backfilled_lead.id,
-            opportunity_id=opportunity.id,
-            record_type="Opportunity",
-            record_action="System Action",
-            account_name=account.account_name,
-            contact_name=contact.contact_name,
-            notes=f"Confirmed Opportunity #{opportunity.id} with backfilled Qualified Lead #{backfilled_lead.id}",
+            account_manager=payload.account.account_manager or account.account_manager,
+            deal_size=payload.lead.deal_size,
+            currency=payload.lead.currency or "AED",
+            type=payload.lead.type or "Warm",
+            stage=payload.lead.stage or "Non-Qualified",
+            lead_source=payload.lead.lead_source or "Voice Capture",
+            technology=as_list(payload.lead.technology),
+            next_steps=payload.lead.next_steps,
+            next_action_date=payload.lead.next_action_date,
+            closure_date=payload.lead.closure_date,
+            notes=payload.lead.notes,
+            created_by=user_id,
+            updated_by=user_id,
+        )
+        db.add(lead)
+        db.flush()
+        created["lead"] = {"lead_id": lead.id, "lead_name": lead.lead_name, "lead_stage": lead.stage, "is_new": True}
+
+    # --- Activity (logged against whatever was created/matched above) ---
+    activity_name = (payload.activity.activity_name or "").strip()
+    if activity_name:
+        if opportunity:
+            record_type, record_action = "Opportunity", "System Action"
+        elif lead:
+            record_type, record_action = "Lead", "System Action"
+        elif contact:
+            record_type, record_action = "Contact", "System Action"
+        elif account:
+            record_type, record_action = "Account", "System Action"
+        else:
+            record_type, record_action = "Account", "System Action"
+        record_action = payload.activity.record_action or record_action
+
+        activity = Activity(
+            activity_name=activity_name,
+            account_id=account.id if account else None,
+            subsidiary_id=subsidiary.id if subsidiary else None,
+            contact_id=contact.id if contact else None,
+            lead_id=lead.id if lead else None,
+            opportunity_id=opportunity.id if opportunity else None,
+            record_type=record_type,
+            record_action=record_action,
+            account_name=account.account_name if account else None,
+            contact_name=contact.contact_name if contact else None,
+            next_step=payload.activity.next_step,
+            notes=payload.activity.notes,
             created_by=user_id,
         )
         db.add(activity)
-        db.commit()
+        db.flush()
+        created["activity"] = {"activity_id": activity.id, "activity_name": activity.activity_name, "is_new": True}
 
-        return {
-            "entity_type": "Opportunity",
-            "account_id": account.id,
-            "account_name": account.account_name,
-            "account_manager": account.account_manager,
-            "contact_id": contact.id,
-            "contact_name": contact.contact_name,
-            "lead_id": backfilled_lead.id,
-            "lead_name": backfilled_lead.lead_name,
-            "lead_stage": backfilled_lead.stage,
-            "lead_type": backfilled_lead.type,
-            "opportunity_id": opportunity.id,
-            "opportunity_name": opportunity.opportunity_name,
-            "opportunity_stage": opportunity.stage,
-            "deal_size": float(opportunity.deal_size) if opportunity.deal_size else 0,
-            "currency": opportunity.currency,
-            "activity_id": activity.id,
-        }
+    # --- System audit-log entry for whatever was actually created (skip for pure-Activity commits,
+    # which already are the audit-worthy record themselves) ---
+    if account and ("account" in created or "contact" in created or "lead" in created or "opportunity" in created):
+        summary_bits = [k.capitalize() for k in ("account", "subsidiary", "contact", "lead", "opportunity") if k in created]
+        log_activity = Activity(
+            activity_name=f"Voice Commit: {' + '.join(summary_bits)} for {account.account_name}",
+            account_id=account.id,
+            subsidiary_id=subsidiary.id if subsidiary else None,
+            contact_id=contact.id if contact else None,
+            lead_id=lead.id if lead else None,
+            opportunity_id=opportunity.id if opportunity else None,
+            record_type="System Generated",
+            record_action="Voice Commit",
+            account_name=account.account_name,
+            contact_name=contact.contact_name if contact else None,
+            notes=f"Confirmed via Voice Station: {', '.join(summary_bits)}.",
+            created_by=user_id,
+        )
+        db.add(log_activity)
 
-    lead_title = (
-        payload.lead.lead_name
-        or f"{account.account_name} - {payload.lead.service or 'Consulting'} Engagement"
-    )
+    if not created:
+        raise HTTPException(400, "Nothing to commit — at least an Account name is required.")
 
-    lead = Lead(
-        lead_name=lead_title,
-        account_id=account.id,
-        subsidiary_id=subsidiary.id if subsidiary else None,
-        contact_id=contact.id,
-        account_manager=payload.account.account_manager or account.account_manager,
-        deal_size=payload.lead.deal_size,
-        currency=payload.lead.currency or "AED",
-        type=payload.lead.type or "Warm",
-        stage=payload.lead.stage or "Non-Qualified",
-        lead_source=payload.lead.lead_source or "Voice Capture",
-        technology=as_list(payload.lead.technology),
-        next_steps=payload.lead.next_steps,
-        next_action_date=payload.lead.next_action_date,
-        closure_date=payload.lead.closure_date,
-        notes=payload.lead.notes,
-        created_by=user_id,
-        updated_by=user_id,
-    )
-    db.add(lead)
-    db.flush()
-
-    activity = Activity(
-        activity_name=f"Lead Confirmed: {lead.lead_name}",
-        account_id=account.id,
-        subsidiary_id=subsidiary.id if subsidiary else None,
-        contact_id=contact.id,
-        lead_id=lead.id,
-        record_type="Lead",
-        record_action="Call",
-        account_name=account.account_name,
-        contact_name=contact.contact_name,
-        notes=payload.lead.notes or "Voice captured sales lead",
-        created_by=user_id,
-    )
-    db.add(activity)
     db.commit()
-
-    return {
-        "entity_type": "Lead",
-        "account_id": account.id,
-        "account_name": account.account_name,
-        "account_manager": account.account_manager,
-        "contact_id": contact.id,
-        "contact_name": contact.contact_name,
-        "lead_id": lead.id,
-        "lead_name": lead.lead_name,
-        "lead_stage": lead.stage,
-        "activity_id": activity.id,
-    }
+    return created
 
 
 def get_db():
@@ -1662,6 +1722,8 @@ def get_db():
 # =====================================================================
 # FastAPI Application & Startup Initialization
 # =====================================================================
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="DataPhi CRM Voice Engine (AWS Sonnet 5)", version="8.2.0")
 app.add_middleware(
@@ -2898,6 +2960,8 @@ def save_lead_form(data: LeadFormIn, user: dict = Depends(get_current_user), db:
     is_new = lead is None
     old_stage = lead.stage if lead else None
     old_name = lead.lead_name if lead else None
+    old_next_steps = lead.next_steps if lead else None
+    old_next_action_date = lead.next_action_date if lead else None
     if not lead:
         lead = Lead(account_id=data.account_id, contact_id=data.contact_id, lead_name=data.lead_name)
         db.add(lead)
@@ -2935,6 +2999,12 @@ def save_lead_form(data: LeadFormIn, user: dict = Depends(get_current_user), db:
             )
         if old_name != data.lead_name:
             log_system_activity(db, action="Editing Lead name", user_id=user["uid"], lead_id=lead.id, account_id=lead.account_id)
+        if old_next_steps != data.next_steps or old_next_action_date != data.next_action_date:
+            when = f" (by {data.next_action_date})" if data.next_action_date else ""
+            log_system_activity(
+                db, action=f"Follow-up on Lead: {data.next_steps or 'next step updated'}{when}",
+                user_id=user["uid"], lead_id=lead.id, account_id=lead.account_id,
+            )
 
     db.commit()
     db.refresh(lead)
@@ -2957,6 +3027,8 @@ def save_opportunity_form(data: OpportunityFormIn, user: dict = Depends(get_curr
     is_new = opp is None
     old_stage = opp.stage if opp else None
     old_name = opp.opportunity_name if opp else None
+    old_next_steps = opp.next_steps if opp else None
+    old_next_action_date = opp.next_action_date if opp else None
     if not opp:
         opp = Opportunity(
             opportunity_name=data.opportunity_name,
@@ -3021,6 +3093,12 @@ def save_opportunity_form(data: OpportunityFormIn, user: dict = Depends(get_curr
             )
         if old_name != data.opportunity_name:
             log_system_activity(db, action="Editing Opportunity name", user_id=user["uid"], opportunity_id=opp.id, account_id=opp.account_id)
+        if old_next_steps != data.next_steps or old_next_action_date != data.next_action_date:
+            when = f" (by {data.next_action_date})" if data.next_action_date else ""
+            log_system_activity(
+                db, action=f"Follow-up on Opportunity: {data.next_steps or 'next step updated'}{when}",
+                user_id=user["uid"], opportunity_id=opp.id, account_id=opp.account_id,
+            )
 
     db.commit()
     return {"status": "success", "opportunity_id": opp.id}
@@ -3524,7 +3602,7 @@ def get_voice_drafts(db: Session = Depends(get_db)):
                 raw_ext = {}
         if not isinstance(raw_ext, dict):
             raw_ext = {}
-        for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
+        for key in ["account", "subsidiary", "contact", "lead", "opportunity", "activity"]:
             if key not in raw_ext or not isinstance(raw_ext.get(key), dict):
                 raw_ext[key] = {}
 
@@ -3550,6 +3628,15 @@ async def process_voice(
     audio: UploadFile = File(...),
     user_email: str | None = Form(None),
     user_phone: str | None = Form(None),
+    # Set by per-page voice capture (e.g. editing an existing Lead) to tell the extractor which
+    # record is already open, so it doesn't need an account/contact name to make sense of a
+    # short follow-up like "next action date is the 10th of October" — see evaluate_mandatory_fields.
+    context_hint: str | None = Form(None),
+    # JSON string of {"lead": {"lead_name": "...", ...}, "account": {...}, "contact": {...}}
+    # from the currently-open record on an edit-mode page. Backfills whatever the extractor left
+    # null (it was told not to invent these) so the stored draft reflects the FULL record this
+    # capture is about, not just the newly-spoken fields — see merge_known_fields below.
+    known_fields: str | None = Form(None),
     user: dict = Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
@@ -3577,13 +3664,15 @@ async def process_voice(
         transcript = await _stt_service.transcribe(wav_bytes, duration_sec)
         transcribe_ms = int((time.perf_counter() - start_transcribe) * 1000)
 
+        extraction_input = f"{context_hint}\n\n{transcript}" if context_hint else transcript
+
         start_llm = time.perf_counter()
-        payload, input_tokens, output_tokens = await _chat_service.extract(transcript)
+        payload, input_tokens, output_tokens = await _chat_service.extract(extraction_input)
         llm_ms = int((time.perf_counter() - start_llm) * 1000)
         total_ms = int((time.perf_counter() - start_total) * 1000)
 
         deterministic_transcript_fallback(payload, transcript)
-        missing_fields, clarification_prompt = evaluate_mandatory_fields(payload, transcript)
+        missing_fields, clarification_prompt = evaluate_mandatory_fields(payload, transcript, has_context=bool(context_hint))
 
         # Sarvam Saaras STT: ₹30/hour, 15-second minimum billing increment
         billable_seconds = max(15.0, duration_sec)
@@ -3597,9 +3686,24 @@ async def process_voice(
         # not summed into a single misleading "total_cost".
 
         extracted_dict = payload.model_dump(mode="json")
-        for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
+        for key in ["account", "subsidiary", "contact", "lead", "opportunity", "activity"]:
             if key not in extracted_dict or not isinstance(extracted_dict.get(key), dict):
                 extracted_dict[key] = {}
+
+        if known_fields:
+            try:
+                known = json.loads(known_fields)
+            except (json.JSONDecodeError, TypeError):
+                known = {}
+            if isinstance(known, dict):
+                for entity_key, field_map in known.items():
+                    if entity_key not in extracted_dict or not isinstance(field_map, dict):
+                        continue
+                    for field, value in field_map.items():
+                        if value in (None, ""):
+                            continue
+                        if extracted_dict[entity_key].get(field) in (None, ""):
+                            extracted_dict[entity_key][field] = value
 
         draft = VoiceDraft(
             user_id=user_id,
@@ -3725,7 +3829,7 @@ async def resume_voice_draft(
     llm_cost_usd = ((input_tokens / 1_000_000.0) * 2.0) + ((output_tokens / 1_000_000.0) * 10.0)
 
     extracted_dict = updated_payload.model_dump(mode="json")
-    for key in ["account", "subsidiary", "contact", "lead", "opportunity"]:
+    for key in ["account", "subsidiary", "contact", "lead", "opportunity", "activity"]:
         if key not in extracted_dict or not isinstance(extracted_dict.get(key), dict):
             extracted_dict[key] = {}
 
@@ -3779,20 +3883,10 @@ async def commit_voice_records(payload: ConfirmedCommitPayload, user: dict = Dep
     started = time.perf_counter()
     payload.user_id = user["uid"]  # always the signed-in user, never client-supplied
 
-    if payload.intent in ["create_lead", "create_opportunity"]:
-        if not payload.account.account_name:
-            raise HTTPException(422, "Cannot commit without enterprise Account Name.")
-        if not payload.contact.contact_name:
-            raise HTTPException(422, "Cannot commit without Contact Stakeholder Name.")
-    elif payload.intent == "create_account":
-        if not payload.account.account_name:
-            raise HTTPException(422, "Cannot commit without Account Name.")
-    elif payload.intent == "create_contact":
-        if not payload.account.account_name:
-            raise HTTPException(422, "Cannot commit contact without associated Account Name.")
-        if not payload.contact.contact_name:
-            raise HTTPException(422, "Cannot commit without Contact Name.")
-
+    # Field-level requirements (Account before Contact, Account+Contact before Lead/Opportunity,
+    # at least one record) are enforced inside execute_full_hierarchy_commit() itself, per section —
+    # `intent` is a single guess from the LLM and can't reliably gate a commit that may contain
+    # several independent records at once (e.g. "create an account AND a contact").
     try:
         created_records = execute_full_hierarchy_commit(db, payload)
         if payload.draft_id:
@@ -3821,6 +3915,7 @@ async def commit_voice_records(payload: ConfirmedCommitPayload, user: dict = Dep
         }
     except Exception as exc:
         db.rollback()
+        logger.exception("Voice commit failed (intent=%s, draft_id=%s)", payload.intent, payload.draft_id)
         raise HTTPException(500, f"Database transaction failed: {exc}") from exc
 
 
