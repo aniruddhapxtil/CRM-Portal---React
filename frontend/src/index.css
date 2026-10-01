@@ -26,6 +26,28 @@
   --color-warning-light: #fbf3de;
   --color-success: #02ab65; /* data-phi.ai/phi-genai-ai-and-ml — dark green accent used on that page */
   --color-success-light: #e8f9f1;
+
+  /* Playful accents — outside the DataPhi brand hue on purpose, used sparingly for section/
+     entity coding (Voice Station field groups + draft pills, service-line pills) and table/
+     card ornamentation. Fixed 6-hue palette: teal blue, royal blue, amber, royal purple, neon
+     green, yellow. Each has a solid and a soft "-tint" background; both are redefined per-theme
+     below so components using these tokens never need dark: variants. */
+  --color-accent-tealblue: #0e7490;
+  --color-accent-tealblue-tint: #e1f4f8;
+  --color-accent-royalblue: #1d4ed8;
+  --color-accent-royalblue-tint: #e8edfc;
+  --color-accent-amber: #d97706;
+  --color-accent-amber-tint: #fdf1de;
+  --color-accent-royalpurple: #6d28d9;
+  --color-accent-royalpurple-tint: #efe7fc;
+  --color-accent-neongreen: #15a13a;
+  --color-accent-neongreen-tint: #e4f7e4;
+  --color-accent-yellow: #a16207;
+  --color-accent-yellow-tint: #faf0d6;
+  /* Punchier than --color-accent-yellow on purpose — that one's muted for text-on-tint
+     legibility (badge labels); this is for borders/strokes, which don't carry that constraint
+     and read better fully saturated. */
+  --color-accent-yellow-strong: #eab308;
 }
 
 :root {
@@ -71,6 +93,22 @@
   --color-warning-light: rgba(229, 172, 77, 0.16);
   --color-success: #22c55e;
   --color-success-light: rgba(34, 197, 94, 0.16);
+
+  /* Same 6-hue accent palette, re-tuned brighter for a dark canvas; tints become translucent
+     washes instead of pale solids so they still read as "tinted glass" rather than muddy. */
+  --color-accent-tealblue: #22d3ee;
+  --color-accent-tealblue-tint: rgba(34, 211, 238, 0.16);
+  --color-accent-royalblue: #60a5fa;
+  --color-accent-royalblue-tint: rgba(96, 165, 250, 0.16);
+  --color-accent-amber: #fbbf24;
+  --color-accent-amber-tint: rgba(251, 191, 36, 0.16);
+  --color-accent-royalpurple: #c4b5fd;
+  --color-accent-royalpurple-tint: rgba(196, 181, 253, 0.16);
+  --color-accent-neongreen: #4ade80;
+  --color-accent-neongreen-tint: rgba(74, 222, 128, 0.16);
+  --color-accent-yellow: #fde047;
+  --color-accent-yellow-tint: rgba(253, 224, 71, 0.16);
+  --color-accent-yellow-strong: #fde047;
 
   --glass-bg: rgba(22, 29, 26, 0.75);
   --glass-bg-dark: rgba(6, 10, 9, 0.9);
@@ -157,6 +195,53 @@ input[type="number"]::-webkit-inner-spin-button {
   margin: 0;
 }
 
+/* ---------- Playful surfaces ----------
+   Opt-in ornamentation layered on top of the plain Card/DataTable — a soft corner-glow fade
+   and a gradient top strip, both driven by --fade-from/--fade-to so any accent pair can be
+   dropped in via inline style without new CSS per color. */
+
+.surface-fade {
+  position: relative;
+  isolation: isolate;
+}
+.surface-fade::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  border-radius: inherit;
+  background: radial-gradient(120% 140% at 100% 0%, var(--fade-from, var(--color-brand-tint)) 0%, transparent 55%),
+    radial-gradient(100% 120% at 0% 100%, var(--fade-to, transparent) 0%, transparent 60%);
+  opacity: 0.9;
+  pointer-events: none;
+}
+
+.gradient-strip {
+  background: linear-gradient(90deg, var(--fade-from, var(--color-brand)), var(--fade-to, var(--color-brand-cyan)));
+}
+
+/* Colored left rail used on Voice Station's per-section field groups. Deliberately a separate
+   variable from --fade-from/--fade-to (those drive the pale corner tint; this wants the full
+   saturated accent, not the tint). */
+.accent-rail {
+  border-left: 3px solid var(--rail-color, var(--color-brand));
+}
+
+/* Page heading box — dark-green-to-white diagonal wash, concentrated toward the bottom-right
+   (where the page's primary action button already sits) so it never dulls the heading text
+   sitting top-left. Built from the semantic success tokens, which are already theme-aware
+   (dark mode fades into the dark surface color instead of white), so this needs no dark:
+   variant of its own. */
+.page-header-fade {
+  background: linear-gradient(
+    135deg,
+    var(--color-surface) 0%,
+    var(--color-surface) 40%,
+    var(--color-success-light) 72%,
+    var(--color-success) 130%
+  );
+}
+
 /* ---------- Motion ---------- */
 
 @keyframes fade-in-up {
@@ -209,6 +294,51 @@ input[type="number"]::-webkit-inner-spin-button {
   }
 }
 
+/* Idle mic glow — a slow brand-colored breathing ring, invites the click. */
+@keyframes mic-glow {
+  0%,
+  100% {
+    box-shadow: 0 0 0 0 rgba(20, 184, 166, 0.35), 0 4px 18px rgba(20, 184, 166, 0.25);
+  }
+  50% {
+    box-shadow: 0 0 0 10px rgba(20, 184, 166, 0), 0 4px 24px rgba(20, 184, 166, 0.4);
+  }
+}
+.mic-idle-glow {
+  animation: mic-glow 2.6s ease-in-out infinite;
+}
+
+/* Recording — a faster, danger-colored ring expansion. */
+@keyframes mic-rec-glow {
+  0% {
+    box-shadow: 0 0 0 0 rgba(209, 69, 69, 0.5);
+  }
+  70% {
+    box-shadow: 0 0 0 14px rgba(209, 69, 69, 0);
+  }
+  100% {
+    box-shadow: 0 0 0 0 rgba(209, 69, 69, 0);
+  }
+}
+.mic-rec-glow {
+  animation: mic-rec-glow 1.5s ease-out infinite;
+}
+
+/* Waveform bars shown while recording — each bar offsets its delay for a lively bounce. */
+@keyframes wave-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.25);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.wave-bar {
+  animation: wave-bounce 0.9s ease-in-out infinite;
+  transform-origin: center;
+}
+
 /* Every page's content fades/slides in on mount — replays naturally on each route change. */
 .animate-page-in {
   animation: fade-in-up 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
@@ -235,7 +365,10 @@ input[type="number"]::-webkit-inner-spin-button {
   .animate-fade-in,
   .animate-slide-in-right,
   .animate-slide-in-left,
-  .notif-pulse {
+  .notif-pulse,
+  .mic-idle-glow,
+  .mic-rec-glow,
+  .wave-bar {
     animation: none;
   }
 }

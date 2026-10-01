@@ -10,6 +10,7 @@ import { Card } from "../../components/ui/Card";
 import { getLeadsOverview } from "../../api/leads";
 import { requestLeadQualification } from "../../api/qualifications";
 import { SERVICE_LINE_OPTIONS } from "../../constants/options";
+import { serviceLineTone } from "../../constants/serviceLineColors";
 import type { LeadOverviewRow } from "../../types/entities";
 import { useAuth } from "../../context/AuthContext";
 import { useToast } from "../../components/ui/Toast";
@@ -72,7 +73,7 @@ export function LeadRegistryPage() {
       header: "Service line",
       render: (r) => (
         <div className="flex flex-wrap gap-1">
-          {r.service_line.length === 0 ? "—" : r.service_line.map((s) => <Badge key={s}>{s}</Badge>)}
+          {r.service_line.length === 0 ? "—" : r.service_line.map((s) => <Badge key={s} tone={serviceLineTone(s)}>{s}</Badge>)}
         </div>
       ),
     },
@@ -160,7 +161,7 @@ export function LeadRegistryPage() {
               <div>
                 <div className="mb-1 text-xs font-semibold uppercase text-muted">Service Line</div>
                 <div className="flex flex-wrap gap-1">
-                  {selected.service_line.length ? selected.service_line.map((s) => <Badge key={s} tone="brand">{s}</Badge>) : "—"}
+                  {selected.service_line.length ? selected.service_line.map((s) => <Badge key={s} tone={serviceLineTone(s)}>{s}</Badge>) : "—"}
                 </div>
               </div>
               <div>

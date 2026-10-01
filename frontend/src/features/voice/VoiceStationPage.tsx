@@ -1,16 +1,16 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { AppLayout } from "../../components/layout/AppLayout";
 import { PageHeader } from "../../components/layout/PageHeader";
 import { Card } from "../../components/ui/Card";
 import { Badge } from "../../components/ui/Badge";
 import { Button } from "../../components/ui/Button";
-import { FieldLabel, Input, Textarea } from "../../components/ui/Input";
+import { FieldLabel, Input } from "../../components/ui/Input";
 import { SearchableSelect, type SearchableOption } from "../../components/ui/SearchableSelect";
 import { DataTable, type DataTableColumn } from "../../components/ui/DataTable";
 import { useToast } from "../../components/ui/Toast";
 import { useVoiceCapture } from "../../hooks/useVoiceCapture";
 import { useNotifications } from "../../context/NotificationContext";
-import { commitVoiceDraft, getVoiceDrafts, processVoiceAudio, resumeVoiceDraft } from "../../api/voice";
+import { commitVoiceDraft, getVoiceDrafts, processVoiceAudio } from "../../api/voice";
 import { getLookups } from "../../api/lookups";
 import type { Lookups } from "../../types/entities";
 import type {
@@ -64,6 +64,10 @@ function summarizeCommit(created: Record<string, unknown>): string[] {
   if (activity) {
     lines.push(`Logged an Activity: "${activity.activity_name}".`);
   }
+  const qualRequest = get("qualification_request");
+  if (qualRequest) {
+    lines.push("Qualification requested — pending Admin/Team Lead approval before this becomes an Opportunity.");
+  }
   return lines.length ? lines : ["Record confirmed and committed."];
 }
 
@@ -76,6 +80,17 @@ function draftStatusTone(status: string): "success" | "warning" | "neutral" {
   if (status === "COMPLETED" || status === "STAGED_READY") return "success";
   if (status === "INCOMPLETE") return "warning";
   return "neutral";
+}
+
+/** Mirrors FieldGroup's section coloring so a draft's target entity reads as the same
+ * color in the registry table below as its form does above. */
+function entityTone(entity: string): "royalblue" | "tealblue" | "amber" | "royalpurple" | "neongreen" | "yellow" {
+  if (entity.includes("account")) return "royalblue";
+  if (entity.includes("subsidiary")) return "tealblue";
+  if (entity.includes("contact")) return "amber";
+  if (entity.includes("lead") || entity.includes("opportunity")) return "royalpurple";
+  if (entity.includes("activity")) return "neongreen";
+  return "yellow";
 }
 
 export function VoiceStationPage() {
@@ -92,7 +107,6 @@ export function VoiceStationPage() {
   const [missingFields, setMissingFields] = useState<string[]>([]);
   const [clarificationPrompt, setClarificationPrompt] = useState<string | null>(null);
   const [telemetry, setTelemetry] = useState<VoiceProcessResponse["telemetry"] | null>(null);
-  const [followUpText, setFollowUpText] = useState("");
   const [committed, setCommitted] = useState<Record<string, unknown> | null>(null);
 
   const [drafts, setDrafts] = useState<VoiceDraftRow[]>([]);
@@ -181,24 +195,6 @@ export function VoiceStationPage() {
     await startRecording();
   }
 
-  async function handlePatchDraft() {
-    if (!draftId || !followUpText.trim()) return;
-    setBusy(true);
-    setStatusText("Updating draft…");
-    try {
-      const res = await resumeVoiceDraft(draftId, followUpText.trim());
-      applyResponse(res);
-      setFollowUpText("");
-      setStatusText("Draft updated");
-    } catch (err) {
-      show(err instanceof Error ? err.message : "Could not update the draft.", "danger");
-      setStatusText("Error");
-    } finally {
-      setBusy(false);
-      refreshDrafts();
-    }
-  }
-
   function updateField<K extends keyof VoiceExtractedData>(
     section: K,
     key: keyof NonNullable<VoiceExtractedData[K]>,
@@ -281,7 +277,7 @@ export function VoiceStationPage() {
       key: "target",
       header: "Target",
       render: (r) => (
-        <Badge tone="brand" className="capitalize">
+        <Badge tone={entityTone(r.target_entity)} className="capitalize">
           {r.target_entity.replace(/_/g, " ")}
         </Badge>
       ),
@@ -317,20 +313,43 @@ export function VoiceStationPage() {
 
       <div className="grid grid-cols-1 gap-6 md:grid-cols-[420px_1fr]">
         {/* Console */}
-        <Card title="Voice Console">
-          <div className="flex flex-col items-center gap-3 rounded-lg bg-canvas/60 p-6">
+        <Card title="Voice Console" fade="var(--color-accent-royalblue-tint)">
+          <div className="flex flex-col items-center gap-3 rounded-lg bg-gradient-to-b from-brand-tint/50 to-transparent p-6">
             <button
               onClick={handleMicClick}
               disabled={busy}
-              className={`tap-target flex h-20 w-20 items-center justify-center rounded-full text-3xl text-white shadow-lg transition-colors disabled:opacity-50 ${
-                isRecording ? "animate-pulse bg-danger" : "bg-brand"
+              className={`tap-target flex h-20 w-20 items-center justify-center rounded-full text-white shadow-lg transition-all duration-200 disabled:opacity-50 ${
+                isRecording
+                  ? "mic-rec-glow scale-105 bg-danger"
+                  : busy
+                    ? "bg-[image:var(--cta-gradient)] opacity-80"
+                    : "mic-idle-glow bg-[image:var(--cta-gradient)] hover:scale-105"
               }`}
               aria-label={isRecording ? "Stop recording" : "Start recording"}
             >
-              {isRecording ? "⏹" : "🎤"}
+              {isRecording ? (
+                <span aria-hidden="true" className="h-4 w-4 rounded-sm bg-white" />
+              ) : (
+                <span aria-hidden="true" className="h-6 w-6 rounded-full bg-white" />
+              )}
             </button>
-            <div className="text-lg font-bold tabular-nums text-ink">{formatMs(elapsedMs)}</div>
-            <div className="text-xs font-semibold text-muted">{statusText}</div>
+
+            {isRecording && (
+              <div className="flex h-6 items-end gap-1" aria-hidden="true">
+                {[0, 1, 2, 3, 4, 5, 6].map((i) => (
+                  <span
+                    key={i}
+                    className="wave-bar w-1 rounded-full bg-danger"
+                    style={{ height: "100%", animationDelay: `${i * 0.1}s` }}
+                  />
+                ))}
+              </div>
+            )}
+
+            <div className="bg-gradient-to-r from-brand to-brand-cyan bg-clip-text text-lg font-bold tabular-nums text-transparent">
+              {formatMs(elapsedMs)}
+            </div>
+            <Badge tone={isRecording ? "danger" : busy ? "warning" : "brand"}>{statusText}</Badge>
           </div>
 
           {micError && (
@@ -340,25 +359,16 @@ export function VoiceStationPage() {
           )}
 
           {clarificationPrompt && missing.size > 0 && (
-            <div className="mt-4 flex flex-col gap-2 rounded-lg border border-warning/30 bg-warning-light/40 p-3">
+            <div className="mt-4 rounded-lg border border-warning/30 bg-warning-light/40 p-3">
               <p className="text-xs font-semibold text-warning">{clarificationPrompt}</p>
-              <Textarea
-                rows={2}
-                value={followUpText}
-                onChange={(e) => setFollowUpText(e.target.value)}
-                placeholder="Type the missing details…"
-              />
-              <Button variant="outline" disabled={busy || !followUpText.trim()} onClick={handlePatchDraft}>
-                Patch Draft
-              </Button>
             </div>
           )}
 
           {telemetry && (
             <div className="mt-4 flex flex-wrap gap-2">
-              <Badge tone="brand">⚡ Total {totalMs}ms</Badge>
-              <Badge tone="success">🎙️ Transcribe {whisperMs}ms</Badge>
-              <Badge tone="warning">🧠 LLM {llmMs}ms</Badge>
+              <Badge tone="tealblue">Total {totalMs}ms</Badge>
+              <Badge tone="neongreen">Transcribe {whisperMs}ms</Badge>
+              <Badge tone="royalpurple">LLM {llmMs}ms</Badge>
             </div>
           )}
         </Card>
@@ -366,185 +376,196 @@ export function VoiceStationPage() {
         {/* Review */}
         <Card
           title="Transcript & Review"
+          fade="var(--color-accent-royalpurple-tint)"
           actions={draftId ? <span className="font-mono text-xs text-muted">Draft #{draftId}</span> : undefined}
         >
-          <div className="mb-4 min-h-[44px] rounded-lg border border-border bg-canvas/50 px-3 py-2 text-sm italic text-muted">
-            {transcript || "Recorded transcript will appear here."}
+          <div
+            className="surface-fade relative mb-4 min-h-[44px] overflow-hidden rounded-lg border border-border bg-canvas/50 px-4 py-2.5 text-sm italic text-muted"
+            style={{ "--fade-from": "var(--color-brand-tint)", "--fade-to": "var(--color-accent-tealblue-tint)" } as CSSProperties}
+          >
+            <span className="pointer-events-none absolute -left-0.5 -top-3 select-none text-5xl font-black leading-none text-brand/15" aria-hidden="true">
+              &ldquo;
+            </span>
+            <span className="relative pl-3">{transcript || "Recorded transcript will appear here."}</span>
           </div>
 
           {committed ? (
-            <div className="rounded-lg border border-success/30 bg-success-light/50 p-4 text-sm text-success">
-              <p className="mb-2 font-bold">Record confirmed &amp; committed</p>
-              <ul className="flex flex-col gap-1">
+            <div className="surface-fade relative overflow-hidden rounded-lg border border-success/30 bg-success-light/50 p-4 text-sm text-success" style={{ "--fade-from": "var(--color-accent-neongreen-tint)" } as CSSProperties}>
+              <p className="mb-2 text-base font-bold">Record confirmed &amp; committed</p>
+              <ul className="flex flex-col gap-1.5">
                 {summarizeCommit(committed).map((line, i) => (
-                  <li key={i} className="flex items-start gap-1.5">
-                    <span aria-hidden="true">✓</span>
+                  <li key={i} className="flex items-start gap-2">
+                    <span aria-hidden="true" className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-success" />
                     <span>{line}</span>
                   </li>
                 ))}
               </ul>
             </div>
           ) : (
-            <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
-              <FieldGroup title="Account Form">
-                <FieldLabel required error={missing.has("account.account_name") ? "Required" : undefined}>
-                  Account Name
-                </FieldLabel>
-                <SearchableSelect
-                  options={accountOptions}
-                  value={fields.account?.account_name ?? null}
-                  onChange={(v) => updateField("account", "account_name", v as string | null)}
-                  invalid={missing.has("account.account_name")}
-                  placeholder="Search existing accounts or type a new name…"
-                  onCreateNew={(q) => updateField("account", "account_name", q)}
-                  createNewLabel={(q) => `Use "${q}" (new account)`}
-                />
-                <FieldLabel>Account Manager</FieldLabel>
-                <Input
-                  value={fields.account?.account_manager ?? ""}
-                  onChange={(e) => updateField("account", "account_manager", e.target.value)}
-                />
-                <FieldLabel>Region</FieldLabel>
-                <Input
-                  value={fields.account?.region ?? ""}
-                  onChange={(e) => updateField("account", "region", e.target.value)}
-                />
-              </FieldGroup>
+            <div className="flex flex-col gap-4">
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-3">
+                <FieldGroup title="Account Form" accent="royalblue">
+                  <FieldLabel required error={missing.has("account.account_name") ? "Required" : undefined}>
+                    Account Name
+                  </FieldLabel>
+                  <SearchableSelect
+                    options={accountOptions}
+                    value={fields.account?.account_name ?? null}
+                    onChange={(v) => updateField("account", "account_name", v as string | null)}
+                    invalid={missing.has("account.account_name")}
+                    placeholder="Search existing accounts or type a new name…"
+                    onCreateNew={(q) => updateField("account", "account_name", q)}
+                    createNewLabel={(q) => `Use "${q}" (new account)`}
+                  />
+                  <FieldLabel>Account Manager</FieldLabel>
+                  <Input
+                    value={fields.account?.account_manager ?? ""}
+                    onChange={(e) => updateField("account", "account_manager", e.target.value)}
+                  />
+                  <FieldLabel>Region</FieldLabel>
+                  <Input
+                    value={fields.account?.region ?? ""}
+                    onChange={(e) => updateField("account", "region", e.target.value)}
+                  />
+                </FieldGroup>
 
-              <FieldGroup title="Subsidiary">
-                <FieldLabel>Subsidiary Name</FieldLabel>
-                <Input
-                  value={fields.subsidiary?.subsidiary_name ?? ""}
-                  onChange={(e) => updateField("subsidiary", "subsidiary_name", e.target.value)}
-                />
-                <FieldLabel>Region</FieldLabel>
-                <Input
-                  value={fields.subsidiary?.region ?? ""}
-                  onChange={(e) => updateField("subsidiary", "region", e.target.value)}
-                />
-                <FieldLabel>Industry</FieldLabel>
-                <Input
-                  value={fields.subsidiary?.industry ?? ""}
-                  onChange={(e) => updateField("subsidiary", "industry", e.target.value)}
-                />
-              </FieldGroup>
+                <FieldGroup title="Subsidiary" accent="tealblue">
+                  <FieldLabel>Subsidiary Name</FieldLabel>
+                  <Input
+                    value={fields.subsidiary?.subsidiary_name ?? ""}
+                    onChange={(e) => updateField("subsidiary", "subsidiary_name", e.target.value)}
+                  />
+                  <FieldLabel>Region</FieldLabel>
+                  <Input
+                    value={fields.subsidiary?.region ?? ""}
+                    onChange={(e) => updateField("subsidiary", "region", e.target.value)}
+                  />
+                  <FieldLabel>Industry</FieldLabel>
+                  <Input
+                    value={fields.subsidiary?.industry ?? ""}
+                    onChange={(e) => updateField("subsidiary", "industry", e.target.value)}
+                  />
+                </FieldGroup>
 
-              <FieldGroup title="Contact Form">
-                <FieldLabel required error={missing.has("contact.contact_name") ? "Required" : undefined}>
-                  Contact Name
-                </FieldLabel>
-                <SearchableSelect
-                  options={contactOptions}
-                  value={fields.contact?.contact_name ?? null}
-                  onChange={(v) => updateField("contact", "contact_name", v as string | null)}
-                  invalid={missing.has("contact.contact_name")}
-                  placeholder="Search existing contacts or type a new name…"
-                  onCreateNew={(q) => updateField("contact", "contact_name", q)}
-                  createNewLabel={(q) => `Use "${q}" (new contact)`}
-                />
-                <FieldLabel>Designation</FieldLabel>
-                <Input
-                  value={fields.contact?.designation ?? ""}
-                  onChange={(e) => updateField("contact", "designation", e.target.value)}
-                />
-                <FieldLabel>Email</FieldLabel>
-                <Input
-                  type="email"
-                  value={fields.contact?.email ?? ""}
-                  onChange={(e) => updateField("contact", "email", e.target.value)}
-                />
-              </FieldGroup>
+                <FieldGroup title="Contact Form" accent="amber">
+                  <FieldLabel required error={missing.has("contact.contact_name") ? "Required" : undefined}>
+                    Contact Name
+                  </FieldLabel>
+                  <SearchableSelect
+                    options={contactOptions}
+                    value={fields.contact?.contact_name ?? null}
+                    onChange={(v) => updateField("contact", "contact_name", v as string | null)}
+                    invalid={missing.has("contact.contact_name")}
+                    placeholder="Search existing contacts or type a new name…"
+                    onCreateNew={(q) => updateField("contact", "contact_name", q)}
+                    createNewLabel={(q) => `Use "${q}" (new contact)`}
+                  />
+                  <FieldLabel>Designation</FieldLabel>
+                  <Input
+                    value={fields.contact?.designation ?? ""}
+                    onChange={(e) => updateField("contact", "designation", e.target.value)}
+                  />
+                  <FieldLabel>Email</FieldLabel>
+                  <Input
+                    type="email"
+                    value={fields.contact?.email ?? ""}
+                    onChange={(e) => updateField("contact", "email", e.target.value)}
+                  />
+                </FieldGroup>
+              </div>
 
-              <FieldGroup title="Opportunity and Lead Form" className="sm:col-span-2">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <FieldLabel>Title</FieldLabel>
-                    <SearchableSelect
-                      options={leadOrOpportunityOptions}
-                      value={fields.opportunity?.opportunity_name ?? fields.lead?.lead_name ?? null}
-                      onChange={(v) => {
-                        updateField("opportunity", "opportunity_name", v as string | null);
-                        updateField("lead", "lead_name", v as string | null);
-                      }}
-                      placeholder="Search existing leads/opportunities or type a new title…"
-                      onCreateNew={(q) => {
-                        updateField("opportunity", "opportunity_name", q);
-                        updateField("lead", "lead_name", q);
-                      }}
-                      createNewLabel={(q) => `Use "${q}" (new title)`}
-                    />
+              <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
+                <FieldGroup title="Opportunity and Lead Form" accent="royalpurple">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel>Title</FieldLabel>
+                      <SearchableSelect
+                        options={leadOrOpportunityOptions}
+                        value={fields.opportunity?.opportunity_name ?? fields.lead?.lead_name ?? null}
+                        onChange={(v) => {
+                          updateField("opportunity", "opportunity_name", v as string | null);
+                          updateField("lead", "lead_name", v as string | null);
+                        }}
+                        placeholder="Search existing leads/opportunities or type a new title…"
+                        onCreateNew={(q) => {
+                          updateField("opportunity", "opportunity_name", q);
+                          updateField("lead", "lead_name", q);
+                        }}
+                        createNewLabel={(q) => `Use "${q}" (new title)`}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Deal Size</FieldLabel>
+                      <Input
+                        type="number"
+                        value={fields.opportunity?.deal_size ?? fields.lead?.deal_size ?? ""}
+                        onChange={(e) => {
+                          const n = e.target.value ? Number(e.target.value) : null;
+                          updateField("opportunity", "deal_size", n);
+                          updateField("lead", "deal_size", n);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Technology</FieldLabel>
+                      <Input
+                        value={fields.opportunity?.technology ?? fields.lead?.technology ?? ""}
+                        onChange={(e) => {
+                          updateField("opportunity", "technology", e.target.value);
+                          updateField("lead", "technology", e.target.value);
+                        }}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Next Steps</FieldLabel>
+                      <Input
+                        value={fields.opportunity?.next_steps ?? fields.lead?.next_steps ?? ""}
+                        onChange={(e) => {
+                          updateField("opportunity", "next_steps", e.target.value);
+                          updateField("lead", "next_steps", e.target.value);
+                        }}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <FieldLabel>Deal Size</FieldLabel>
-                    <Input
-                      type="number"
-                      value={fields.opportunity?.deal_size ?? fields.lead?.deal_size ?? ""}
-                      onChange={(e) => {
-                        const n = e.target.value ? Number(e.target.value) : null;
-                        updateField("opportunity", "deal_size", n);
-                        updateField("lead", "deal_size", n);
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel>Technology</FieldLabel>
-                    <Input
-                      value={fields.opportunity?.technology ?? fields.lead?.technology ?? ""}
-                      onChange={(e) => {
-                        updateField("opportunity", "technology", e.target.value);
-                        updateField("lead", "technology", e.target.value);
-                      }}
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel>Next Steps</FieldLabel>
-                    <Input
-                      value={fields.opportunity?.next_steps ?? fields.lead?.next_steps ?? ""}
-                      onChange={(e) => {
-                        updateField("opportunity", "next_steps", e.target.value);
-                        updateField("lead", "next_steps", e.target.value);
-                      }}
-                    />
-                  </div>
-                </div>
-              </FieldGroup>
+                </FieldGroup>
 
-              <FieldGroup title="Activity Form" className="sm:col-span-2">
-                <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
-                  <div>
-                    <FieldLabel>Activity Name</FieldLabel>
-                    <Input
-                      value={fields.activity?.activity_name ?? ""}
-                      onChange={(e) => updateField("activity", "activity_name", e.target.value)}
-                    />
+                <FieldGroup title="Activity Form" accent="neongreen">
+                  <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+                    <div>
+                      <FieldLabel>Activity Name</FieldLabel>
+                      <Input
+                        value={fields.activity?.activity_name ?? ""}
+                        onChange={(e) => updateField("activity", "activity_name", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Record Action</FieldLabel>
+                      <Input
+                        value={fields.activity?.record_action ?? ""}
+                        onChange={(e) => updateField("activity", "record_action", e.target.value)}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Linked Record</FieldLabel>
+                      <SearchableSelect
+                        options={linkedRecordOptions}
+                        value={fields.activity?.linked_record_name ?? null}
+                        onChange={(v) => updateField("activity", "linked_record_name", v as string | null)}
+                        placeholder="Search the account/lead/opportunity/project this is about…"
+                        onCreateNew={(q) => updateField("activity", "linked_record_name", q)}
+                        createNewLabel={(q) => `Use "${q}"`}
+                      />
+                    </div>
+                    <div>
+                      <FieldLabel>Next Step</FieldLabel>
+                      <Input
+                        value={fields.activity?.next_step ?? ""}
+                        onChange={(e) => updateField("activity", "next_step", e.target.value)}
+                      />
+                    </div>
                   </div>
-                  <div>
-                    <FieldLabel>Record Action</FieldLabel>
-                    <Input
-                      value={fields.activity?.record_action ?? ""}
-                      onChange={(e) => updateField("activity", "record_action", e.target.value)}
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel>Linked Record</FieldLabel>
-                    <SearchableSelect
-                      options={linkedRecordOptions}
-                      value={fields.activity?.linked_record_name ?? null}
-                      onChange={(v) => updateField("activity", "linked_record_name", v as string | null)}
-                      placeholder="Search the account/lead/opportunity/project this is about…"
-                      onCreateNew={(q) => updateField("activity", "linked_record_name", q)}
-                      createNewLabel={(q) => `Use "${q}"`}
-                    />
-                  </div>
-                  <div>
-                    <FieldLabel>Next Step</FieldLabel>
-                    <Input
-                      value={fields.activity?.next_step ?? ""}
-                      onChange={(e) => updateField("activity", "next_step", e.target.value)}
-                    />
-                  </div>
-                </div>
-              </FieldGroup>
+                </FieldGroup>
+              </div>
             </div>
           )}
 
@@ -571,10 +592,41 @@ export function VoiceStationPage() {
   );
 }
 
-function FieldGroup({ title, children, className = "" }: { title: string; children: ReactNode; className?: string }) {
+type SectionAccent = "royalblue" | "tealblue" | "amber" | "royalpurple" | "neongreen";
+
+const SECTION_ACCENT: Record<SectionAccent, string> = {
+  royalblue: "var(--color-accent-royalblue)", // Account
+  tealblue: "var(--color-accent-tealblue)", // Subsidiary
+  amber: "var(--color-accent-amber)", // Contact
+  royalpurple: "var(--color-accent-royalpurple)", // Opportunity/Lead
+  neongreen: "var(--color-accent-neongreen)", // Activity
+};
+
+function FieldGroup({
+  title,
+  accent,
+  children,
+  className = "",
+}: {
+  title: string;
+  accent: SectionAccent;
+  children: ReactNode;
+  className?: string;
+}) {
+  const accentVar = SECTION_ACCENT[accent];
   return (
-    <div className={`flex flex-col gap-2 rounded-lg border border-border p-3 ${className}`}>
-      <h4 className="text-xs font-extrabold text-ink">{title}</h4>
+    <div
+      className={`accent-rail surface-fade flex flex-col gap-2 rounded-lg border border-border bg-surface p-3 transition-transform duration-150 hover:-translate-y-0.5 ${className}`}
+      style={
+        {
+          "--rail-color": accentVar,
+          "--fade-from": `var(--color-accent-${accent}-tint)`,
+        } as CSSProperties
+      }
+    >
+      <h4 className="text-xs font-extrabold" style={{ color: accentVar }}>
+        {title}
+      </h4>
       {children}
     </div>
   );

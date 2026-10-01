@@ -8,7 +8,10 @@ interface PageHeaderProps {
 
 export function PageHeader({ title, subtitle, actions }: PageHeaderProps) {
   return (
-    <div className="mb-6 flex flex-wrap items-start justify-between gap-4 rounded-xl border border-border bg-surface p-5">
+    <div
+      className="page-header-fade mb-6 flex flex-wrap items-start justify-between gap-4 rounded-xl border-2 p-5 shadow-sm"
+      style={{ borderColor: "var(--color-accent-yellow-strong)" }}
+    >
       <div>
         <h1 className="text-2xl font-extrabold text-ink">{title}</h1>
         {subtitle && <p className="mt-1 text-sm text-muted">{subtitle}</p>}

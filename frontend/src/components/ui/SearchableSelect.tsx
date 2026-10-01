@@ -34,6 +34,11 @@ export function SearchableSelect({
   const rootRef = useRef<HTMLDivElement>(null);
 
   const selected = useMemo(() => options.find((o) => o.value === value) ?? null, [options, value]);
+  // `value` doesn't have to be a known option's id — callers that store free text (e.g. a name
+  // typed/spoken for a record that doesn't exist yet) pass that text straight through as `value`.
+  // Fall back to showing it verbatim so a freshly-typed/extracted value isn't rendered as blank
+  // just because it has no matching option yet.
+  const displayValue = selected?.label ?? (typeof value === "string" ? value : "");
 
   useEffect(() => {
     if (!open) setQuery("");
@@ -72,7 +77,14 @@ export function SearchableSelect({
       setHighlight((h) => Math.max(h - 1, 0));
     } else if (e.key === "Enter") {
       e.preventDefault();
-      if (filtered[highlight]) commit(filtered[highlight]);
+      if (filtered[highlight]) {
+        commit(filtered[highlight]);
+      } else if (onCreateNew && query.trim()) {
+        // No existing option matches what was typed — same action as clicking the "+ Create…"
+        // row, so Enter doesn't just silently drop the text the user (or the voice extractor) put here.
+        onCreateNew(query.trim());
+        setOpen(false);
+      }
     } else if (e.key === "Escape") {
       setOpen(false);
     }
@@ -84,7 +96,7 @@ export function SearchableSelect({
         className={`tap-target w-full rounded-md border px-3 py-2 text-sm text-ink outline-none transition-colors focus:border-brand focus:ring-2 focus:ring-brand/20 ${
           invalid ? "border-danger bg-danger-light/40" : "border-border bg-surface"
         } ${disabled ? "cursor-not-allowed bg-canvas text-muted" : ""}`}
-        value={open ? query : (selected?.label ?? "")}
+        value={open ? query : displayValue}
         placeholder={placeholder}
         disabled={disabled}
         onFocus={() => setOpen(true)}

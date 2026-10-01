@@ -1,4 +1,4 @@
-import { useMemo, useState, type ReactNode } from "react";
+import { useMemo, useState, type CSSProperties, type ReactNode } from "react";
 import { Input } from "./Input";
 
 export interface DataTableColumn<T> {
@@ -43,7 +43,8 @@ export function DataTable<T>({
   const restCols = columns.filter((c) => c !== primaryCol);
 
   return (
-    <div className="rounded-xl border border-border bg-surface">
+    <div className="overflow-hidden rounded-xl border border-border bg-surface">
+      <div className="gradient-strip h-[3px] w-full" style={{ "--fade-from": "var(--color-brand)", "--fade-to": "var(--color-accent-royalpurple)" } as CSSProperties} />
       <div className="flex flex-wrap items-center gap-3 border-b border-border p-4">
         <Input
           value={query}
@@ -63,7 +64,7 @@ export function DataTable<T>({
           <div className="hidden overflow-x-auto md:block">
             <table className="w-full text-sm">
               <thead>
-                <tr className="border-b border-border bg-canvas/60 text-left text-xs font-bold text-muted">
+                <tr className="border-b border-border bg-gradient-to-r from-brand-tint/60 via-canvas/60 to-canvas/60 text-left text-xs font-bold text-muted">
                   {columns.map((c) => (
                     <th key={c.key} className="px-4 py-3">
                       {c.header}
@@ -72,11 +73,11 @@ export function DataTable<T>({
                 </tr>
               </thead>
               <tbody>
-                {filtered.map((row) => (
+                {filtered.map((row, i) => (
                   <tr
                     key={getRowId(row)}
                     onClick={() => onRowClick?.(row)}
-                    className={`border-b border-border/70 last:border-0 transition-colors duration-150 ${onRowClick ? "cursor-pointer hover:bg-brand-tint/50" : ""}`}
+                    className={`border-b border-border/70 last:border-0 transition-colors duration-150 ${i % 2 === 1 ? "bg-canvas/30" : ""} ${onRowClick ? "cursor-pointer hover:bg-brand-tint/50" : ""}`}
                   >
                     {columns.map((c) => (
                       <td key={c.key} className="px-4 py-3">

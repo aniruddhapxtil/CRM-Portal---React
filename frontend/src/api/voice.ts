@@ -32,12 +32,6 @@ export async function processVoiceAudio(
   return readJsonOrThrow(await fetch(`${BASE}/voice/process`, { method: "POST", body: form }));
 }
 
-export async function resumeVoiceDraft(draftId: number, additionalText: string): Promise<VoiceProcessResponse> {
-  const form = new FormData();
-  form.append("additional_text", additionalText);
-  return readJsonOrThrow(await fetch(`${BASE}/voice/draft/${draftId}/resume`, { method: "POST", body: form }));
-}
-
 export const getVoiceDrafts = () => apiGet<VoiceDraftRow[]>("/voice/drafts");
 
 export const commitVoiceDraft = (payload: VoiceCommitPayload) =>
